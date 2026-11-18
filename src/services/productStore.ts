@@ -2,6 +2,7 @@ import * as SQLite from "expo-sqlite";
 import { useSyncExternalStore } from "react";
 
 import { addDays, fromISODate, toISODate } from "@/utils/expiration";
+import { suggestLocation } from "@/utils/location";
 
 export interface Product {
   id: string;
@@ -99,6 +100,25 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
             "ALTER TABLE productos ADD COLUMN " + name + " " + definition,
           );
         }
+      }
+
+      // Versión 2: antes todo quedaba en "Alacena" por defecto. Se recoloca
+      // cada producto que estaba ahí según su nombre y categoría (una sola vez).
+      const v2 = await db.getFirstAsync<{ user_version: number }>(
+        "PRAGMA user_version",
+      );
+      if ((v2?.user_version ?? 0) < 2) {
+        const rows = await db.getAllAsync<{ id: string; nombre: string; categoria: string }>(
+          "SELECT id, nombre, categoria FROM productos WHERE ubicacion = 'Alacena'",
+        );
+        await db.withTransactionAsync(async () => {
+          for (const r of rows) {
+            const place = suggestLocation(r.nombre, r.categoria);
+            if (place !== "Alacena")
+              await db.runAsync("UPDATE productos SET ubicacion = ? WHERE id = ?", [place, r.id]);
+          }
+          await db.execAsync("PRAGMA user_version = 2");
+        });
       }
       return db;
     })();

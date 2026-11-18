@@ -8,7 +8,8 @@
     "scheme": "despensa",
     "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.despensaviva.app"
     },
     "android": {
       "adaptiveIcon": {
@@ -17,7 +18,8 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.despensaviva.app"
     },
     "web": {
       "output": "static",
@@ -31,6 +33,22 @@
           "backgroundColor": "#208AEF",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Despensa Viva usa la cámara para leer fechas de vencimiento, códigos de barras y facturas.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Despensa Viva necesita tus fotos para leer una factura guardada.",
+          "cameraPermission": "Despensa Viva usa la cámara para leer facturas.",
+          "microphonePermission": false
         }
       ]
     ],

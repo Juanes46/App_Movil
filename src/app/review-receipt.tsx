@@ -15,7 +15,9 @@ import {
 } from "@/components/PantryUI";
 import { addProducts } from "@/services/productStore";
 import { addDays, formatDate, parseDate } from "@/utils/expiration";
-import { COLORS as C } from "@/constants/pantry";
+import { getPendingReceipt, setPendingReceipt } from "@/utils/receipt";
+import { COLORS as C, ESTIMATED_DAYS } from "@/constants/pantry";
+import { suggestLocation } from "@/utils/location";
 const samples = [
   {
     name: "Leche entera 1 L",
@@ -56,15 +58,27 @@ const samples = [
 ];
 export default function ReviewReceiptScreen() {
   const router = useRouter();
-  const [rows, setRows] = useState(() =>
-    samples.map((p, i) => ({
+  // Factura leída por el OCR; si no hay, se muestra la factura de ejemplo.
+  const [scanned] = useState(() => getPendingReceipt());
+  const [rows, setRows] = useState(() => {
+    const source = scanned
+      ? scanned.items.map((it) => ({
+          name: it.name,
+          category: it.category,
+          location: suggestLocation(it.name, it.category),
+          quantity: it.quantity,
+          days: it.days ?? ESTIMATED_DAYS[it.category] ?? 30,
+        }))
+      : samples;
+    return source.map((p, i) => ({
       ...p,
-      selected: i < 5,
+      selected: scanned ? true : i < 5,
       date: formatDate(addDays(new Date(), p.days)),
       estimated: true,
-    })),
-  );
+    }));
+  });
   const [editing, setEditing] = useState(false);
+  const [showText, setShowText] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const selected = rows.filter((p) => p.selected);
@@ -91,6 +105,7 @@ export default function ReviewReceiptScreen() {
           estimated: p.estimated,
         })),
       );
+      setPendingReceipt(null);
       router.replace("/pantry");
     } catch {
       setError("No se pudo guardar la factura. Intenta nuevamente.");
@@ -131,16 +146,38 @@ export default function ReviewReceiptScreen() {
         </View>
         <View style={{ flex: 1 }}>
           <Txt style={{ fontWeight: "600", fontSize: 17 }}>
-            Éxito · Calle 80
+            {scanned ? (scanned.store ?? "Factura escaneada") : "Éxito · Calle 80"}
           </Txt>
-          <Txt style={ui.muted}>Factura de ejemplo · 6 productos</Txt>
+          <Txt style={ui.muted}>
+            {scanned
+              ? `Leída con la cámara · ${rows.length} productos`
+              : `Factura de ejemplo · ${rows.length} productos`}
+          </Txt>
         </View>
       </View>
       <Note>
-        La factura no trae fecha de vencimiento. Usamos una fecha estimada por
-        categoría; corrígela o escanéala después. Revisa también los nombres
-        abreviados.
+        La factura no trae fecha de vencimiento: calculamos una fecha
+        aproximada según el tipo de producto. Corrígela con “Editar fechas” o
+        escanéala después en el envase. Revisa también los nombres abreviados.
       </Note>
+      {scanned && (
+        <View style={{ gap: 8 }}>
+          <Txt
+            accessibilityRole="button"
+            onPress={() => setShowText(!showText)}
+            style={ui.link}
+          >
+            {showText ? "Ocultar texto leído" : "Ver texto leído por la cámara"}
+          </Txt>
+          {showText && (
+            <View style={ui.card}>
+              <Txt selectable style={{ fontSize: 12, color: C.muted }}>
+                {scanned.text}
+              </Txt>
+            </View>
+          )}
+        </View>
+      )}
       <Section
         title="Productos detectados"
         action={selected.length ? "Quitar todos" : "Elegir todos"}
@@ -158,7 +195,7 @@ export default function ReviewReceiptScreen() {
             checked={p.selected}
             subtitle={
               p.name
-                ? `${p.category} · ${p.location} · ${p.estimated ? "Fecha estimada" : "Fecha corregida"}`
+                ? `${p.category} · ${p.location} · ${p.estimated ? `vence aprox. ${p.date}` : `vence ${p.date}`}`
                 : "Corrige el nombre antes de agregar"
             }
             onPress={() => {

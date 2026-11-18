@@ -21,6 +21,7 @@ import {
   useStoreStatus,
 } from "@/services/productStore";
 import { formatDate, parseDate } from "@/utils/expiration";
+import { suggestLocation } from "@/utils/location";
 export default function ProductScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -29,6 +30,7 @@ export default function ProductScreen() {
     category?: string;
     date?: string;
     source?: string;
+    ocrRaw?: string;
     quantity?: string;
     location?: string;
   }>();
@@ -39,7 +41,17 @@ export default function ProductScreen() {
   const [category, setCategory] = useState(params.category ?? "Lácteos");
   const [date, setDate] = useState(params.date ?? "");
   const [quantity, setQuantity] = useState(Number(params.quantity) || 1);
-  const [location, setLocation] = useState(params.location ?? "Nevera");
+  const [location, setLocation] = useState(
+    params.location ?? suggestLocation(params.name ?? "", params.category ?? "Lácteos"),
+  );
+  // En un producto nuevo la ubicación sigue al nombre y la categoría,
+  // hasta que el usuario toque una ubicación a mano.
+  const [locationTouched, setLocationTouched] = useState(
+    !!params.location || !!params.id,
+  );
+  useEffect(() => {
+    if (!locationTouched) setLocation(suggestLocation(name, category));
+  }, [name, category, locationTouched]);
   const [editingDetails, setEditingDetails] = useState(
     !params.name || !!params.id,
   );
@@ -179,6 +191,8 @@ export default function ProductScreen() {
       <Note>
         {params.source === "demo"
           ? "Fecha de una etiqueta de ejemplo. Confírmala o corrígela antes de guardar."
+          : params.source === "ocr"
+            ? `Fecha leída con la cámara${params.ocrRaw ? ` ("${params.ocrRaw}")` : ""}. Compárala con el envase antes de guardar.`
           : estimated
             ? "Fecha estimada por categoría. Verifica la fecha del envase."
             : "Revisa la fecha del envase antes de guardar."}
@@ -192,7 +206,10 @@ export default function ProductScreen() {
             key={l}
             label={l}
             active={location === l}
-            onPress={() => setLocation(l)}
+            onPress={() => {
+              setLocation(l);
+              setLocationTouched(true);
+            }}
           />
         ))}
       </View>

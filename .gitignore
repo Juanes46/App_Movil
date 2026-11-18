@@ -44,3 +44,6 @@ example
 # generated native folders
 /ios
 /android
+
+# Ejemplo de variables (sí se sube)
+!.env.example

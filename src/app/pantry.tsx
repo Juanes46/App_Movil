@@ -61,7 +61,8 @@ export default function PantryScreen() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ gap: 8 }}
+        style={{ flexGrow: 0, flexShrink: 0 }}
+        contentContainerStyle={{ gap: 8, alignItems: "center" }}
       >
         {["Todos", "Nevera", "Congelador", "Alacena"].map((l) => (
           <Chip
