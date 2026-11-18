@@ -1,10 +1,20 @@
 import { useRouter } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
-import { Button } from "@/components/Button";
+import { View } from "react-native";
 import { CheckRow } from "@/components/CheckRow";
-import { Avatar, Chip, Screen, Section, Txt, ui } from "@/components/PantryUI";
-import { COLORS as C } from "@/constants/pantry";
 import {
+  Avatar,
+  Chip,
+  ProductRowSkeleton,
+  Screen,
+  Section,
+  StateMessage,
+  Txt,
+  ui,
+} from "@/components/PantryUI";
+import { COLORS as C } from "@/constants/pantry";
+import { useRefresh } from "@/hooks/use-refresh";
+import {
+  refreshShopping,
   retryShopping,
   toggleShopping,
   useShopping,
@@ -18,11 +28,12 @@ export default function ShoppingScreen() {
   const error = useShoppingError();
   const ready = useShoppingReady();
   const [actionError, setActionError] = useState("");
+  const { refreshing, onRefresh } = useRefresh(refreshShopping);
   const done = items.filter((p) => p.done);
   const pending = items.filter((p) => !p.done);
   const categories = [...new Set(pending.map((p) => p.category))];
   return (
-    <Screen active="Compras">
+    <Screen active="Compras" refreshing={refreshing} onRefresh={onRefresh}>
       <View style={ui.row}>
         <Txt style={[ui.title, { flex: 1 }]}>Lista de compras</Txt>
         <Chip label="+" onPress={() => router.push("/shopping-add")} />
@@ -50,12 +61,13 @@ export default function ShoppingScreen() {
           }}
         />
       </View>
-      {!ready && !error && <ActivityIndicator />}
+      {!ready && !error && <ProductRowSkeleton count={4} />}
       {error && (
-        <>
-          <Txt>No se pudo cargar la lista de compras.</Txt>
-          <Button title="Reintentar" onPress={retryShopping} />
-        </>
+        <StateMessage
+          kind="error"
+          title="No se pudo cargar la lista de compras"
+          onAction={retryShopping}
+        />
       )}
       {!!actionError && <Txt style={{ color: C.danger }}>{actionError}</Txt>}
       {[...categories, ...(done.length ? ["Comprados"] : [])].map(
@@ -88,15 +100,13 @@ export default function ShoppingScreen() {
         },
       )}
       {ready && !items.length && (
-        <>
-          <Txt style={ui.muted}>
-            Tu lista está vacía. Agrega lo que necesitas para tu próxima compra.
-          </Txt>
-          <Button
-            title="Agregar a compras"
-            onPress={() => router.push("/shopping-add")}
-          />
-        </>
+        <StateMessage
+          kind="empty"
+          title="Tu lista está vacía"
+          detail="Agrega lo que necesitas para tu próxima compra."
+          actionLabel="Agregar a compras"
+          onAction={() => router.push("/shopping-add")}
+        />
       )}
     </Screen>
   );

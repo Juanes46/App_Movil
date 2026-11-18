@@ -3,12 +3,15 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
+    "@expo-google-fonts/inter": "^0.4.2",
+    "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",
     "@expo/ui": "~57.0.18",
     "@react-native-ml-kit/text-recognition": "^2.0.0",
     "expo": "~57.0.22",
     "expo-camera": "~57.0.6",
     "expo-constants": "~57.0.18",
     "expo-device": "~57.0.2",
+    "expo-file-system": "~57.0.7",
     "expo-font": "~57.0.4",
     "expo-glass-effect": "~57.0.3",
     "expo-image": "~57.0.5",
@@ -45,7 +48,8 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "test:store": "node scripts/verify-store.cjs",
-    "test:ocr": "node scripts/verify-ocr.cjs"
+    "test:ocr": "node scripts/verify-ocr.cjs",
+    "test:lookup": "node scripts/verify-lookup.cjs"
   },
   "private": true
 }

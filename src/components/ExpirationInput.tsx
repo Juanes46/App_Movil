@@ -1,6 +1,7 @@
 import { StyleSheet, Text, TextInput, View } from "react-native";
 
 import { COLORS } from "@/constants/pantry";
+import { FONTS } from "@/theme/fonts";
 import {
   daysUntil,
   getStatus,
@@ -76,8 +77,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card,
     paddingHorizontal: 14,
     fontSize: 24,
-    fontFamily: "Jakarta",
-    fontWeight: "700",
+    fontFamily: FONTS.title,
     letterSpacing: 1,
     color: COLORS.text,
   },
@@ -88,6 +88,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 999,
   },
-  badgeText: { fontSize: 13, fontWeight: "700" },
-  error: { color: COLORS.danger, fontSize: 13 },
+  badgeText: { fontSize: 13, fontFamily: FONTS.bodyBold },
+  error: { color: COLORS.danger, fontSize: 13, fontFamily: FONTS.body },
 });

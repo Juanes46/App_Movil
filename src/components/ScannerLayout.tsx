@@ -23,6 +23,8 @@ type Props = {
   onManual: () => void;
   /** Si se pasa, se usa la cámara real y se entrega la foto ya recortada al recuadro. */
   onPhoto?: (uri: string) => void;
+  /** Si se pasa, la cámara lee códigos EAN-13 / EAN-8 solos (sin tomar foto). */
+  onBarcode?: (code: string) => void;
   /** Mientras el OCR lee la foto. */
   busy?: boolean;
   /** Mensaje de error o ayuda bajo el visor. */
@@ -81,6 +83,7 @@ export function ScannerLayout({
   onCapture,
   onManual,
   onPhoto,
+  onBarcode,
   busy = false,
   message,
   manualLabel,
@@ -95,7 +98,7 @@ export function ScannerLayout({
   const camera = useRef<CameraView>(null);
   const box = useRef<LayoutRectangle | null>(null);
   const frame = useRef<LayoutRectangle | null>(null);
-  const live = !!onPhoto;
+  const live = !!onPhoto || !!onBarcode;
   const title =
     kind === "code"
       ? "Escanear código"
@@ -147,7 +150,7 @@ export function ScannerLayout({
     maxWidth: kind === "date" ? 340 : kind === "receipt" ? 340 : 300,
     height: kind === "receipt" ? ("62%" as const) : kind === "date" ? 120 : 170,
     borderWidth: 2,
-    borderColor: live ? "#FFFFFF" : C.text,
+    borderColor: live ? C.white : C.text,
     borderRadius: 16,
     alignItems: "center" as const,
     justifyContent: "center" as const,
@@ -156,7 +159,7 @@ export function ScannerLayout({
   const granted = !!permission?.granted;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#D9D9D9" }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.scannerBg }}>
       <View style={{ flex: 1, padding: 20, paddingTop: 8, gap: 12 }}>
         <View style={ui.between}>
           <Pressable
@@ -175,7 +178,7 @@ export function ScannerLayout({
             accessibilityLabel={live ? "Linterna" : "Linterna de demostración"}
             accessibilityState={{ selected: flash }}
             onPress={() => setFlash(!flash)}
-            style={[circle, { backgroundColor: flash ? "#FCEBC8" : "transparent" }]}
+            style={[circle, { backgroundColor: flash ? C.warningSoft : "transparent" }]}
           >
             <Icon name="flash" size={22} />
           </Pressable>
@@ -187,7 +190,9 @@ export function ScannerLayout({
           </Txt>
         ) : (
           <Txt style={{ textAlign: "center", fontSize: 12, color: C.muted }}>
-            {ocrMode === "device"
+            {onBarcode
+              ? "El código se lee solo al encuadrarlo"
+              : ocrMode === "device"
               ? "Lectura en el celular · sin internet ni límite"
               : "Lectura en la nube · requiere internet"}
           </Txt>
@@ -214,6 +219,12 @@ export function ScannerLayout({
               autofocus={focusMode}
               active={focused}
               onCameraReady={() => setReady(true)}
+              barcodeScannerSettings={
+                onBarcode ? { barcodeTypes: ["ean13", "ean8"] } : undefined
+              }
+              onBarcodeScanned={
+                onBarcode && !busy ? (r) => onBarcode(r.data) : undefined
+              }
             />
           )}
 
@@ -245,15 +256,15 @@ export function ScannerLayout({
                 {!live && <Txt style={{ fontSize: 13 }}>Vista de cámara</Txt>}
                 {busy && (
                   <View style={{ alignItems: "center", gap: 8 }}>
-                    <ActivityIndicator color="#FFFFFF" size="large" />
-                    <Txt style={{ color: "#FFFFFF", fontWeight: "600" }}>Leyendo…</Txt>
+                    <ActivityIndicator color={C.white} size="large" />
+                    <Txt style={{ color: C.white, fontWeight: "600" }}>Leyendo…</Txt>
                   </View>
                 )}
               </Pressable>
               <View
                 style={
                   live
-                    ? { backgroundColor: "rgba(27,42,34,0.65)", borderRadius: 12, padding: 10, gap: 4 }
+                    ? { backgroundColor: C.overlay, borderRadius: 12, padding: 10, gap: 4 }
                     : { gap: 20 }
                 }
               >
@@ -262,7 +273,7 @@ export function ScannerLayout({
                     fontSize: 15,
                     fontWeight: "600",
                     textAlign: "center",
-                    color: live ? "#FFFFFF" : C.text,
+                    color: live ? C.white : C.text,
                   }}
                 >
                   {kind === "code"
@@ -271,8 +282,10 @@ export function ScannerLayout({
                       ? "Encuadra solo la fecha de vencimiento"
                       : "Encuadra solo la lista de productos"}
                 </Txt>
-                <Txt style={{ fontSize: 12, textAlign: "center", color: live ? "#FFFFFF" : C.text }}>
-                  {live
+                <Txt style={{ fontSize: 12, textAlign: "center", color: live ? C.white : C.text }}>
+                  {live && onBarcode
+                    ? "Mantén el código quieto y con buena luz. Toca el recuadro para enfocar."
+                    : live
                     ? "Aléjate a unos 20 cm y usa 2× o 3×. Toca el recuadro para enfocar."
                     : kind === "receipt"
                       ? "Si es muy larga, toma varias fotos"
@@ -303,7 +316,7 @@ export function ScannerLayout({
                   borderColor: C.text,
                 }}
               >
-                <Txt style={{ fontWeight: "700", color: zoom === z.value ? "#FFFFFF" : C.text }}>
+                <Txt style={{ fontWeight: "700", color: zoom === z.value ? C.white : C.text }}>
                   {z.label}
                 </Txt>
               </Pressable>

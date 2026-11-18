@@ -30,7 +30,7 @@ export function CheckRow({
           borderWidth: 1,
           borderColor: C.border,
           borderRadius: 14,
-          backgroundColor: "white",
+          backgroundColor: C.white,
         },
       ]}
     >
@@ -41,12 +41,12 @@ export function CheckRow({
           borderRadius: 6,
           borderWidth: 1.5,
           borderColor: C.primary,
-          backgroundColor: checked ? C.primary : "white",
+          backgroundColor: checked ? C.primary : C.white,
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        {checked && <Txt style={{ color: "white" }}>✓</Txt>}
+        {checked && <Txt style={{ color: C.white }}>✓</Txt>}
       </View>
       <View style={[ui.image, { width: 40, height: 40, borderRadius: 10 }]}>
         <Txt style={{ fontSize: 24 }}>{emojiFor(category)}</Txt>

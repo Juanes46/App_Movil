@@ -12,7 +12,7 @@ export const STATUS_INFO: Record<
   { label: string; emoji: string; color: string; bg: string }
 > = {
   vigente: { label: 'Vigente', emoji: '🟢', color: COLORS.ok, bg: COLORS.okSoft },
-  proximo: { label: 'Próximo a vencer', emoji: '🟡', color: COLORS.warning, bg: COLORS.warningSoft },
+  proximo: { label: 'Próximo a vencer', emoji: '🟡', color: COLORS.warningText, bg: COLORS.warningSoft },
   vencido: { label: 'Vencido', emoji: '🔴', color: COLORS.danger, bg: COLORS.dangerSoft },
 };
 

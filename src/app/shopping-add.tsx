@@ -82,7 +82,7 @@ export default function ShoppingAddScreen() {
       {!suggested.length && (
         <Txt style={ui.muted}>No hay sugerencias para esta búsqueda.</Txt>
       )}
-      <View style={[ui.card, { backgroundColor: "#EEF3EA" }]}>
+      <View style={[ui.card, { backgroundColor: C.surfaceSoft }]}>
         <Txt style={{ fontWeight: "600" }}>
           ¿No lo encuentras? Agrégalo manualmente
         </Txt>

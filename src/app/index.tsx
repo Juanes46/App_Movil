@@ -1,72 +1,89 @@
 import { useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { Button } from "@/components/Button";
-import { Avatar, Icon, Screen, Section, Txt, ui } from "@/components/PantryUI";
-import { ProductCard } from "@/components/ProductCard";
-import { COLORS as C, emojiFor } from "@/constants/pantry";
+import { Logo } from "@/components/Logo";
 import {
+  Avatar,
+  Icon,
+  ProductRowSkeleton,
+  Screen,
+  Section,
+  Skeleton,
+  StatTile,
+  StateMessage,
+  Txt,
+  ui,
+} from "@/components/PantryUI";
+import { ProductRow } from "@/components/ProductRow";
+import { COLORS as C, emojiFor } from "@/constants/pantry";
+import { useRefresh } from "@/hooks/use-refresh";
+import {
+  refreshProducts,
   retryLoad,
   useProducts,
   useStoreStatus,
 } from "@/services/productStore";
+import { refreshShopping, useShopping } from "@/services/shoppingStore";
 import { getStatus } from "@/utils/expiration";
-import { useShopping } from "@/services/shoppingStore";
+
 export default function HomeScreen() {
   const router = useRouter();
   const products = useProducts();
   const { ready, error } = useStoreStatus();
   const shopping = useShopping();
+  const { refreshing, onRefresh } = useRefresh(refreshProducts, refreshShopping);
   const soon = products
     .filter((p) => getStatus(p.expiresOn) === "proximo")
     .sort((a, b) => +a.expiresOn - +b.expiresOn);
   const expired = products.filter((p) => getStatus(p.expiresOn) === "vencido");
   const hour = new Date().getHours();
+  const toPantry = (status = "") => router.push({ pathname: "/pantry", params: { status } });
+
   return (
-    <Screen active="Inicio">
-      <View style={ui.row}>
+    <Screen active="Inicio" refreshing={refreshing} onRefresh={onRefresh}>
+      <View style={[ui.row, { gap: 10 }]}>
+        <Logo height={32} />
         <View style={{ flex: 1, gap: 2 }}>
           <Txt style={ui.muted}>
-            {hour < 12
-              ? "Buenos días"
-              : hour < 18
-                ? "Buenas tardes"
-                : "Buenas noches"}
+            {hour < 12 ? "Buenos días" : hour < 18 ? "Buenas tardes" : "Buenas noches"}
           </Txt>
           <Txt style={[ui.title, { fontSize: 24 }]}>Hola, Samuel</Txt>
         </View>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Ver alertas de vencimiento"
-          onPress={() =>
-            router.push({ pathname: "/pantry", params: { status: "atencion" } })
-          }
-          style={[
-            ui.avatar,
-            { backgroundColor: "white", borderWidth: 1, borderColor: C.border },
-          ]}
+          onPress={() => toPantry("atencion")}
+          style={[ui.avatar, { backgroundColor: C.card, borderWidth: 1, borderColor: C.border }]}
         >
           <Icon name="bell" size={22} />
         </Pressable>
         <Avatar />
       </View>
-      {!ready ? (
-        error ? (
-          <>
-            <Txt>No se pudo abrir tu despensa.</Txt>
-            <Button title="Reintentar" onPress={retryLoad} />
-          </>
-        ) : (
-          <ActivityIndicator color={C.primary} />
-        )
+
+      {!ready && error ? (
+        <StateMessage
+          kind="error"
+          title="No se pudo abrir tu despensa"
+          detail="La base de datos del celular no respondió."
+          onAction={retryLoad}
+        />
+      ) : !ready ? (
+        <>
+          <Skeleton width="100%" height={65} radius={14} />
+          <View style={[ui.row, { gap: 10 }]}>
+            {[0, 1, 2].map((i) => (
+              <View key={i} style={{ flex: 1 }}>
+                <Skeleton width="100%" height={80} radius={14} />
+              </View>
+            ))}
+          </View>
+          <ProductRowSkeleton count={2} />
+        </>
       ) : (
         <>
           <Pressable
-            onPress={() =>
-              router.push({
-                pathname: "/pantry",
-                params: { status: "atencion" },
-              })
-            }
+            accessibilityRole="button"
+            onPress={() => toPantry("atencion")}
             style={[
               ui.row,
               {
@@ -88,157 +105,110 @@ export default function HomeScreen() {
                 justifyContent: "center",
               }}
             >
-              <Txt style={{ color: "white", fontWeight: "700" }}>!</Txt>
+              <Txt style={{ color: C.white, fontWeight: "700", fontSize: 15 }}>!</Txt>
             </View>
             <View style={{ flex: 1, gap: 2 }}>
               <Txt style={{ fontWeight: "600" }}>
                 {expired.length} vencidos · {soon.length} vencen esta semana
               </Txt>
-              <Txt style={{ fontSize: 12, color: C.muted }}>
-                Revísalos hoy para no desperdiciar
-              </Txt>
+              <Txt style={{ fontSize: 12, color: C.muted }}>Revísalos hoy para no desperdiciar</Txt>
             </View>
-            <Txt>›</Txt>
+            <Txt style={{ fontSize: 20, color: C.muted }}>›</Txt>
           </Pressable>
-          <View style={[ui.row, { gap: 10 }]}>
-            {[
-              {
-                count: products.length,
-                label: "Productos",
-                bg: "white",
-                status: "",
-              },
-              {
-                count: soon.length,
-                label: "Por vencer",
-                bg: C.warningSoft,
-                status: "proximo",
-              },
-              {
-                count: expired.length,
-                label: "Vencidos",
-                bg: C.danger,
-                status: "vencido",
-              },
-            ].map((s, i) => (
-              <Pressable
-                key={s.label}
-                onPress={() =>
-                  router.push({
-                    pathname: "/pantry",
-                    params: { status: s.status },
-                  })
-                }
-                style={{
-                  flex: 1,
-                  padding: 14,
-                  borderRadius: 14,
-                  minHeight: 80,
-                  gap: 2,
-                  backgroundColor: s.bg,
-                }}
-              >
-                <Txt
-                  style={{
-                    fontFamily: "Jakarta",
-                    fontSize: 28,
-                    fontWeight: "700",
-                    color: i === 2 ? "white" : C.text,
-                  }}
-                >
-                  {s.count}
-                </Txt>
-                <Txt
-                  style={{ fontSize: 12, color: i === 2 ? "white" : C.muted }}
-                >
-                  {s.label}
-                </Txt>
-              </Pressable>
-            ))}
+
+          <View style={[ui.row, { gap: 10, alignItems: "stretch" }]}>
+            <StatTile value={products.length} label="Productos" onPress={() => toPantry()} />
+            <StatTile
+              value={soon.length}
+              label="Por vencer"
+              bg={C.warningSoft}
+              onPress={() => toPantry("proximo")}
+            />
+            <StatTile
+              value={expired.length}
+              label="Vencidos"
+              bg={C.danger}
+              fg={C.white}
+              fgMuted={C.white}
+              onPress={() => toPantry("vencido")}
+            />
           </View>
-          <Button
-            title="Escanear producto"
-            onPress={() => router.push("/scan-code")}
-          />
-          <Section
-            title="Próximos a vencer"
-            action="Ver todo ›"
-            onPress={() =>
-              router.push({
-                pathname: "/pantry",
-                params: { status: "proximo" },
-              })
-            }
-          />
+
+          <Button title="Escanear producto" onPress={() => router.push("/scan-code")} />
+
+          <Section title="Próximos a vencer" action="Ver todo ›" onPress={() => toPantry("proximo")} />
           {soon.slice(0, 2).map((p) => (
-            <ProductCard
+            <ProductRow
               key={p.id}
               product={p}
-              onPress={() =>
-                router.push({ pathname: "/detail", params: { id: p.id } })
-              }
+              onPress={() => router.push({ pathname: "/detail", params: { id: p.id } })}
             />
           ))}
-          {!soon.length && (
-            <Txt style={ui.muted}>No tienes productos próximos a vencer.</Txt>
-          )}
-          <Section
-            title="Agregados recientemente"
-            action="Ver todo ›"
-            onPress={() => router.push("/pantry")}
-          />
-          <View style={[ui.row, { alignItems: "flex-start", gap: 10 }]}>
-            {[...products]
-              .sort((a, b) =>
-                b.id.localeCompare(a.id, undefined, { numeric: true }),
-              )
-              .slice(0, 3)
-              .map((p) => (
-                <Pressable
-                  key={p.id}
-                  style={{ flex: 1, gap: 4 }}
-                  onPress={() =>
-                    router.push({ pathname: "/detail", params: { id: p.id } })
-                  }
-                >
-                  <View style={[ui.image, { height: 66, borderRadius: 10 }]}>
-                    <Txt style={{ fontSize: 34 }}>{emojiFor(p.category)}</Txt>
-                  </View>
-                  <Txt
-                    numberOfLines={1}
-                    style={{ fontSize: 13, fontWeight: "600" }}
+          {!soon.length && <Txt style={ui.muted}>No tienes productos próximos a vencer.</Txt>}
+
+          <Section title="Agregados recientemente" action="Ver todo ›" onPress={() => toPantry()} />
+          {products.length ? (
+            <View style={[ui.row, { alignItems: "flex-start", gap: 10 }]}>
+              {[...products]
+                .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }))
+                .slice(0, 3)
+                .map((p) => (
+                  <Pressable
+                    key={p.id}
+                    accessibilityRole="button"
+                    style={{ flex: 1, gap: 4 }}
+                    onPress={() => router.push({ pathname: "/detail", params: { id: p.id } })}
                   >
-                    {p.name}
-                  </Txt>
-                  <Txt style={{ fontSize: 11, color: C.muted }}>
-                    x{p.quantity ?? 1} · {p.location ?? "Alacena"}
-                  </Txt>
-                </Pressable>
-              ))}
-          </View>
-          {!products.length && (
-            <Txt style={ui.muted}>Agrega tu primer producto para comenzar.</Txt>
+                    <View style={[ui.image, { height: 66, borderRadius: 10 }]}>
+                      <Txt style={{ fontSize: 34 }}>{emojiFor(p.category)}</Txt>
+                    </View>
+                    <Txt numberOfLines={1} style={{ fontSize: 13, fontWeight: "600" }}>
+                      {p.name}
+                    </Txt>
+                    <Txt style={{ fontSize: 11, color: C.muted }}>
+                      x{p.quantity ?? 1} · {p.location ?? "Alacena"}
+                    </Txt>
+                  </Pressable>
+                ))}
+            </View>
+          ) : (
+            <StateMessage
+              kind="empty"
+              title="Tu despensa está vacía"
+              detail="Escanea un código de barras o registra tu primer producto."
+              actionLabel="Agregar producto"
+              onAction={() => router.push("/add")}
+            />
           )}
         </>
       )}
+
       <Pressable
+        accessibilityRole="button"
         onPress={() => router.push("/shopping")}
-        style={[
-          ui.row,
-          { backgroundColor: "#EEF3EA", padding: 14, borderRadius: 14 },
-        ]}
+        style={[ui.row, { backgroundColor: C.surfaceSoft, padding: 14, borderRadius: 14 }]}
       >
-        <Icon name="list" size={22} />
+        <View
+          style={{
+            borderWidth: 1.5,
+            borderColor: C.muted,
+            borderRadius: 8,
+            width: 28,
+            height: 28,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Icon name="list" size={22} />
+        </View>
         <View style={{ flex: 1, gap: 2 }}>
-          <Txt style={{ fontSize: 15, fontWeight: "600" }}>
-            Lista de compras
-          </Txt>
+          <Txt style={{ fontSize: 15, fontWeight: "600" }}>Lista de compras</Txt>
           <Txt style={{ color: C.muted, fontSize: 12 }}>
             {shopping.filter((p) => !p.done).length} pendientes ·{" "}
             {shopping.filter((p) => p.done).length} comprados
           </Txt>
         </View>
-        <Txt>›</Txt>
+        <Txt style={{ fontSize: 20, color: C.muted }}>›</Txt>
       </Pressable>
     </Screen>
   );

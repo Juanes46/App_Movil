@@ -53,6 +53,17 @@ export function retryShopping() {
   });
 }
 retryShopping();
+/** Pull-to-refresh: recarga sin vaciar la lista; devuelve false si falla. */
+export async function refreshShopping(): Promise<boolean> {
+  try {
+    await reload();
+    return true;
+  } catch (e) {
+    error = String(e);
+    emit();
+    return false;
+  }
+}
 export function useShopping() {
   return useSyncExternalStore(
     subscribe,

@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { CATEGORIES, COLORS } from "@/constants/pantry";
+import { FONTS } from "@/theme/fonts";
 
 type Props = {
   value: string;
@@ -44,6 +45,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     borderColor: COLORS.primary,
   },
-  chipText: { color: COLORS.text, fontSize: 14 },
-  chipTextSelected: { color: "#FFFFFF", fontWeight: "600" },
+  chipText: { color: COLORS.text, fontSize: 14, fontFamily: FONTS.body },
+  chipTextSelected: { color: COLORS.white, fontFamily: FONTS.bodySemi },
 });

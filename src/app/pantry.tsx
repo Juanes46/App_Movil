@@ -1,17 +1,20 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
-import { ActivityIndicator, ScrollView, View } from "react-native";
+import { ScrollView, View } from "react-native";
 import {
   Avatar,
   Chip,
+  ProductRowSkeleton,
   Screen,
   SearchField,
+  StateMessage,
   Txt,
   ui,
 } from "@/components/PantryUI";
-import { Button } from "@/components/Button";
-import { ProductCard } from "@/components/ProductCard";
+import { ProductRow } from "@/components/ProductRow";
+import { useRefresh } from "@/hooks/use-refresh";
 import {
+  refreshProducts,
   retryLoad,
   useProducts,
   useStoreStatus,
@@ -31,6 +34,7 @@ export default function PantryScreen() {
   const [location, setLocation] = useState("Todos");
   const [status, setStatus] = useState(params.status ?? "");
   const [sortName, setSortName] = useState(false);
+  const { refreshing, onRefresh } = useRefresh(refreshProducts);
   const visible = products
     .filter(
       (p) =>
@@ -47,7 +51,7 @@ export default function PantryScreen() {
         : +a.expiresOn - +b.expiresOn,
     );
   return (
-    <Screen active="Despensa">
+    <Screen active="Despensa" refreshing={refreshing} onRefresh={onRefresh}>
       <View style={ui.row}>
         <Txt style={[ui.title, { flex: 1 }]}>Mi despensa</Txt>
         <Chip
@@ -89,28 +93,45 @@ export default function PantryScreen() {
       </View>
       {!ready ? (
         error ? (
-          <>
-            <Txt>No se pudo abrir la despensa.</Txt>
-            <Button title="Reintentar" onPress={retryLoad} />
-          </>
+          <StateMessage
+            kind="error"
+            title="No se pudo abrir la despensa"
+            detail="La base de datos del celular no respondió."
+            onAction={retryLoad}
+          />
         ) : (
-          <ActivityIndicator />
+          <ProductRowSkeleton count={5} />
         )
       ) : (
         visible.map((p) => (
-          <ProductCard
+          <ProductRow
             key={p.id}
             product={p}
-            onPress={() =>
-              router.push({ pathname: "/detail", params: { id: p.id } })
-            }
+            onPress={() => router.push({ pathname: "/detail", params: { id: p.id } })}
           />
         ))
       )}
-      {ready && !visible.length && (
-        <Txt style={ui.muted}>
-          No hay productos que coincidan con estos filtros.
-        </Txt>
+      {ready && !products.length && (
+        <StateMessage
+          kind="empty"
+          title="Sin productos"
+          detail="Agrega tu primer producto escaneando su código de barras."
+          actionLabel="Agregar producto"
+          onAction={() => router.push("/add")}
+        />
+      )}
+      {ready && !!products.length && !visible.length && (
+        <StateMessage
+          kind="empty"
+          title="Nada coincide"
+          detail="No hay productos con estos filtros."
+          actionLabel="Quitar filtros"
+          onAction={() => {
+            setQuery("");
+            setLocation("Todos");
+            setStatus("");
+          }}
+        />
       )}
     </Screen>
   );

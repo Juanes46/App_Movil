@@ -18,7 +18,7 @@ export default function AddScreen() {
           ui.card,
           {
             padding: 18,
-            backgroundColor: "#EEF3EA",
+            backgroundColor: C.surfaceSoft,
             borderColor: C.primary,
             borderWidth: 1.5,
           },
@@ -51,7 +51,7 @@ export default function AddScreen() {
           onPress={() => router.push("/scan-code")}
         />
       </View>
-      <View style={[ui.card, { padding: 18, backgroundColor: "#EEF3EA" }]}>
+      <View style={[ui.card, { padding: 18, backgroundColor: C.surfaceSoft }]}>
         <View style={ui.row}>
           <Icon name="receipt" size={28} />
           <View style={{ flex: 1, gap: 2 }}>
@@ -99,8 +99,8 @@ export default function AddScreen() {
         </Pressable>
       </View>
       <Note>
-        Prototipo: el escaneo usa ejemplos. El registro manual guarda los
-        productos en este dispositivo.
+        El código de barras se busca en Open Food Facts y Los Precios; la fecha
+        de vencimiento la confirmas tú. Todo se guarda en este dispositivo.
       </Note>
       <Section title="Registro manual" />
       <Button

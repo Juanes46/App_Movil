@@ -1,19 +1,25 @@
 import type { PropsWithChildren } from "react";
 import { Image } from "expo-image";
 import { useRouter, type Href } from "expo-router";
+import { useEffect, useRef } from "react";
 import {
+  Animated,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
   type TextProps,
+  type TextStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS as C } from "@/constants/pantry";
+import { FONTS, resolveFont } from "@/theme/fonts";
+import { Button } from "./Button";
 
 export const icons = {
   bell: require("../../assets/figma/homeContext-0.svg"),
@@ -63,7 +69,173 @@ export function Icon({
   );
 }
 export function Txt({ style, ...props }: TextProps) {
-  return <Text {...props} style={[ui.text, style]} />;
+  // Elige Inter o Plus Jakarta Sans del grosor pedido (ver theme/fonts).
+  const flat = StyleSheet.flatten([ui.text, style]) as TextStyle;
+  return <Text {...props} style={resolveFont(flat)} />;
+}
+
+/** Barra superior con botón volver, título centrado y acción opcional. */
+export function TopBar({ title, right }: { title: string; right?: React.ReactNode }) {
+  const router = useRouter();
+  return (
+    <View style={ui.topbar}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Volver"
+        style={ui.back}
+        onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
+      >
+        <Txt style={{ fontSize: 28, lineHeight: 30 }}>‹</Txt>
+      </Pressable>
+      <Txt accessibilityRole="header" style={[ui.section, { flex: 1, textAlign: "center" }]}>
+        {title}
+      </Txt>
+      {right ?? <View style={{ width: 40 }} />}
+    </View>
+  );
+}
+
+export type TagTone = "neutral" | "info" | "vigente" | "proximo" | "vencido";
+const TAG_TONES: Record<TagTone, { bg: string; fg: string }> = {
+  neutral: { bg: C.surfaceSoft, fg: C.text },
+  info: { bg: C.primarySoft, fg: C.primaryDark },
+  vigente: { bg: C.okSoft, fg: C.ok },
+  proximo: { bg: C.warning, fg: C.text },
+  vencido: { bg: C.danger, fg: C.white },
+};
+/** Etiqueta pequeña (estado de vencimiento, "Producto encontrado"…). */
+export function Tag({ label, tone = "neutral" }: { label: string; tone?: TagTone }) {
+  const t = TAG_TONES[tone];
+  return (
+    <View style={[ui.tag, { backgroundColor: t.bg }]}>
+      <Txt numberOfLines={1} style={{ fontSize: 11, fontWeight: "600", color: t.fg }}>
+        {label}
+      </Txt>
+    </View>
+  );
+}
+
+/** Cifra grande con etiqueta (resumen de Inicio). */
+export function StatTile({
+  value,
+  label,
+  bg = C.card,
+  fg = C.text,
+  fgMuted = C.muted,
+  onPress,
+}: {
+  value: number | string;
+  label: string;
+  bg?: string;
+  fg?: string;
+  fgMuted?: string;
+  onPress?: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${value} ${label}`}
+      onPress={onPress}
+      style={[ui.stat, { backgroundColor: bg }]}
+    >
+      <Txt style={{ fontFamily: "Jakarta", fontSize: 28, fontWeight: "700", color: fg }}>
+        {value}
+      </Txt>
+      <Txt style={{ fontSize: 12, color: fgMuted }}>{label}</Txt>
+    </Pressable>
+  );
+}
+
+/** Bloque gris que late suavemente mientras carga. */
+export function Skeleton({
+  width,
+  height,
+  radius = 8,
+}: {
+  width: number | `${number}%`;
+  height: number;
+  radius?: number;
+}) {
+  const opacity = useRef(new Animated.Value(0.5)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.5, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+  return (
+    <Animated.View
+      style={{ width, height, borderRadius: radius, backgroundColor: C.imageBg, opacity }}
+    />
+  );
+}
+
+/** Esqueleto con la forma de ProductRow (imagen, dos líneas y etiqueta). */
+export function ProductRowSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <View style={{ gap: 12 }} accessibilityLabel="Cargando productos">
+      {Array.from({ length: count }, (_, i) => (
+        <View key={i} style={[ui.card, ui.row, { padding: 10, minHeight: 70 }]}>
+          <Skeleton width={48} height={48} radius={10} />
+          <View style={{ flex: 1, gap: 8 }}>
+            <Skeleton width="70%" height={14} />
+            <Skeleton width="45%" height={11} />
+          </View>
+          <Skeleton width={62} height={21} radius={10} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * Estado vacío o de error con botón de reintento.
+ *   <StateMessage kind="offline" onRetry={reload} />
+ */
+export function StateMessage({
+  kind,
+  title,
+  detail,
+  actionLabel,
+  onAction,
+}: {
+  kind: "empty" | "offline" | "error";
+  title?: string;
+  detail?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  const preset = {
+    empty: { emoji: "🧺", title: "Aún no hay nada aquí", label: "Agregar" },
+    offline: {
+      emoji: "📡",
+      title: "Sin conexión a internet",
+      label: "Reintentar",
+    },
+    error: { emoji: "⚠️", title: "Algo salió mal", label: "Reintentar" },
+  }[kind];
+  return (
+    <View
+      accessibilityRole={kind === "empty" ? undefined : "alert"}
+      style={[ui.card, { alignItems: "center", paddingVertical: 24, backgroundColor: C.surfaceSoft }]}
+    >
+      <Txt style={{ fontSize: 36 }}>{preset.emoji}</Txt>
+      <Txt style={[ui.section, { textAlign: "center" }]}>{title ?? preset.title}</Txt>
+      {!!detail && <Txt style={[ui.muted, { textAlign: "center", lineHeight: 19 }]}>{detail}</Txt>}
+      {onAction && (
+        <Button
+          title={actionLabel ?? preset.label}
+          variant={kind === "empty" ? "primary" : "secondary"}
+          onPress={onAction}
+          style={{ alignSelf: "stretch" }}
+        />
+      )}
+    </View>
+  );
 }
 export function Section({
   title,
@@ -121,7 +293,7 @@ export function Chip({
         active && { backgroundColor: C.primary, borderColor: C.primary },
       ]}
     >
-      <Txt style={{ fontSize: 13, color: active ? "white" : C.text }}>
+      <Txt style={{ fontSize: 13, color: active ? C.white : C.text }}>
         {label}
       </Txt>
     </Pressable>
@@ -250,7 +422,7 @@ export function BottomNav({ active }: { active?: string }) {
         onPress={() => router.push("/add")}
         style={ui.fab}
       >
-        <Txt style={{ fontSize: 34, color: "white", lineHeight: 42 }}>+</Txt>
+        <Txt style={{ fontSize: 34, color: C.white, lineHeight: 42 }}>+</Txt>
       </Pressable>
     </View>
   );
@@ -261,40 +433,38 @@ export function Screen({
   active,
   footer,
   scroll = true,
+  refreshing,
+  onRefresh,
 }: PropsWithChildren<{
   title?: string;
   active?: string;
   footer?: React.ReactNode;
   scroll?: boolean;
+  /** Pull-to-refresh: si se pasa onRefresh, se puede deslizar hacia abajo para recargar. */
+  refreshing?: boolean;
+  onRefresh?: () => void;
 }>) {
-  const router = useRouter();
   return (
     <SafeAreaView style={ui.safe} edges={["top", "left", "right"]}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        {title && (
-          <View style={ui.topbar}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Volver"
-              style={ui.back}
-              onPress={() =>
-                router.canGoBack() ? router.back() : router.replace("/")
-              }
-            >
-              <Txt style={{ fontSize: 28, lineHeight: 30 }}>‹</Txt>
-            </Pressable>
-            <Txt style={[ui.section, { flex: 1, textAlign: "center" }]}>
-              {title}
-            </Txt>
-            <View style={{ width: 40 }} />
-          </View>
-        )}
+        {title && <TopBar title={title} />}
         {scroll ? (
           <ScrollView
             keyboardShouldPersistTaps="handled"
+            refreshControl={
+              onRefresh ? (
+                <RefreshControl
+                  refreshing={!!refreshing}
+                  onRefresh={onRefresh}
+                  tintColor={C.primary}
+                  colors={[C.primary]}
+                  progressBackgroundColor={C.card}
+                />
+              ) : undefined
+            }
             contentContainerStyle={[
               ui.body,
               active ? { paddingBottom: 60 } : { paddingBottom: 24 },
@@ -311,7 +481,7 @@ export function Screen({
           </SafeAreaView>
         )}
         {active && (
-          <SafeAreaView edges={["bottom"]} style={{ backgroundColor: "white" }}>
+          <SafeAreaView edges={["bottom"]} style={{ backgroundColor: C.white }}>
             <BottomNav active={active} />
           </SafeAreaView>
         )}
@@ -321,7 +491,7 @@ export function Screen({
 }
 export const ui = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.background },
-  text: { fontFamily: "Inter", fontSize: 14, color: C.text },
+  text: { fontFamily: FONTS.body, fontSize: 14, color: C.text },
   title: {
     fontFamily: "Jakarta",
     fontWeight: "700",
@@ -344,7 +514,7 @@ export const ui = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: "white",
+    backgroundColor: C.white,
     gap: 12,
   },
   avatar: {
@@ -360,7 +530,7 @@ export const ui = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: "white",
+    backgroundColor: C.white,
     borderWidth: 1,
     borderColor: C.border,
     justifyContent: "center",
@@ -371,7 +541,7 @@ export const ui = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: "white",
+    backgroundColor: C.white,
     overflow: "hidden",
   },
   step: {
@@ -388,14 +558,22 @@ export const ui = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: "white",
+    backgroundColor: C.white,
     paddingHorizontal: 14,
   },
+  tag: {
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    alignSelf: "flex-start",
+    maxWidth: 140,
+  },
+  stat: { flex: 1, padding: 14, borderRadius: 14, minHeight: 80, gap: 2 },
   input: {
-    fontFamily: "Inter",
+    fontFamily: FONTS.body,
     color: C.text,
     fontSize: 16,
-    backgroundColor: "white",
+    backgroundColor: C.white,
     borderWidth: 1,
     borderColor: C.border,
     borderRadius: 12,
@@ -419,7 +597,7 @@ export const ui = StyleSheet.create({
     flexDirection: "row",
     borderTopWidth: 1,
     borderColor: C.border,
-    backgroundColor: "white",
+    backgroundColor: C.white,
   },
   tab: { flex: 1, alignItems: "center", justifyContent: "center", gap: 4 },
   fab: {
@@ -430,10 +608,12 @@ export const ui = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
+    borderWidth: 3,
+    borderColor: C.white,
     backgroundColor: C.primary,
     alignItems: "center",
     justifyContent: "center",
-    boxShadow: "0px 4px 10px rgba(23,38,28,0.25)",
+    boxShadow: `0px 4px 10px ${C.shadow}`,
   },
   topbar: {
     height: 56,
@@ -448,7 +628,7 @@ export const ui = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: C.border,
-    backgroundColor: "white",
+    backgroundColor: C.white,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -460,7 +640,7 @@ export const ui = StyleSheet.create({
     borderColor: C.border,
   },
   image: {
-    backgroundColor: "#E8EFE3",
+    backgroundColor: C.imageBg,
     borderRadius: 16,
     height: 190,
     alignItems: "center",

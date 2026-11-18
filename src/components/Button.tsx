@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text } from "react-native";
 
 import { COLORS } from "@/constants/pantry";
+import { FONTS } from "@/theme/fonts";
 
 type Props = {
   title: string;
@@ -34,7 +35,7 @@ export function Button({
       <Text
         style={[
           styles.text,
-          variant === "primary" && { color: "#FFFFFF" },
+          variant === "primary" && { color: COLORS.white },
           variant === "secondary" && { color: COLORS.primaryDark },
           variant === "danger" && { color: COLORS.danger },
         ]}
@@ -60,5 +61,5 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary,
   },
   danger: { backgroundColor: COLORS.dangerSoft },
-  text: { fontSize: 16, fontFamily: "Inter", fontWeight: "600" },
+  text: { fontSize: 16, fontFamily: FONTS.bodySemi },
 });

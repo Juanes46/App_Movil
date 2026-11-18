@@ -190,6 +190,20 @@ export function retryLoad() {
   reload().catch(fail);
 }
 
+/**
+ * Pull-to-refresh: vuelve a leer la tabla sin vaciar la pantalla.
+ * Si falla, la lista anterior se mantiene y se devuelve false.
+ */
+export async function refreshProducts(): Promise<boolean> {
+  try {
+    await reload();
+    return true;
+  } catch (e) {
+    if (!status.ready) fail(e);
+    return false;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  API para las pantallas                                             */
 /* ------------------------------------------------------------------ */
