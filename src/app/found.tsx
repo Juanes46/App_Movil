@@ -14,13 +14,15 @@ import {
   Txt,
   ui,
 } from "@/components/PantryUI";
-import { COLORS as C, emojiFor } from "@/constants/pantry";
+import { COLORS as C, emojiForProduct } from "@/constants/pantry";
 import {
   buscarPorEAN,
   LookupError,
   type LookupResult,
 } from "@/services/productLookup";
 import { formatDate, fromISODate } from "@/utils/expiration";
+import { TimeoutError, withTimeout } from "@/utils/timeout";
+import { LoadingSplash } from "@/components/LoadingSplash";
 
 /** 25850 -> "$25.850" */
 function formatPrice(n: number): string {
@@ -43,11 +45,14 @@ export default function FoundScreen() {
   const search = useCallback(async (code: string, force = false) => {
     setState({ kind: "loading" });
     try {
-      setState({ kind: "ok", product: await buscarPorEAN(code, { force }) });
+      setState({ kind: "ok", product: await withTimeout(buscarPorEAN(code, { force })) });
     } catch (e) {
       setState({
         kind: "error",
-        error: e instanceof LookupError ? e : new LookupError("servicio_caido"),
+        error:
+          e instanceof LookupError
+            ? e
+            : new LookupError(e instanceof TimeoutError ? "tiempo_agotado" : "servicio_caido"),
       });
     }
   }, []);
@@ -163,7 +168,7 @@ export default function FoundScreen() {
                 accessibilityLabel={`Foto de ${p.nombre}`}
               />
             ) : (
-              <Txt style={{ fontSize: 72 }}>{emojiFor(p.categoria)}</Txt>
+              <Txt style={{ fontSize: 72 }}>{emojiForProduct(p.nombre, p.categoria)}</Txt>
             )}
           </View>
           <View style={{ gap: 6 }}>
@@ -209,6 +214,7 @@ export default function FoundScreen() {
           </Txt>
         </>
       )}
+      <LoadingSplash visible={state.kind === "loading"} message="Buscando el producto…" />
     </Screen>
   );
 }

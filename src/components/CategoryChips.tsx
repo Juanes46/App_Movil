@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useRef } from "react";
+import { Pressable, ScrollView, StyleSheet, Text } from "react-native";
 
 import { CATEGORIES, COLORS } from "@/constants/pantry";
 import { FONTS } from "@/theme/fonts";
@@ -8,31 +9,51 @@ type Props = {
   onChange: (category: string) => void;
 };
 
+/** Chips de categoría en una sola fila con scroll horizontal (son 14). */
 export function CategoryChips({ value, onChange }: Props) {
+  // Una categoría antigua que ya no está en la lista se muestra igual, al inicio.
+  const legacy = value && !CATEGORIES.some((c) => c.name === value);
+  const items = legacy ? [{ name: value, emoji: "📦" }, ...CATEGORIES] : CATEGORIES;
+  const scroll = useRef<ScrollView>(null);
+  const scrolled = useRef(false);
   return (
-    <View style={styles.wrap}>
-      {CATEGORIES.map((c) => {
+    <ScrollView
+      ref={scroll}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={{ flexGrow: 0 }}
+      contentContainerStyle={styles.wrap}
+      accessibilityRole="radiogroup"
+      accessibilityLabel="Categoría"
+    >
+      {items.map((c) => {
         const selected = c.name === value;
         return (
           <Pressable
             key={c.name}
+            accessibilityRole="radio"
+            accessibilityState={{ selected }}
             onPress={() => onChange(c.name)}
+            // Al abrir, la fila se desplaza hasta la categoría elegida (p. ej. "Otros", al final).
+            onLayout={(e) => {
+              if (!selected || scrolled.current) return;
+              scrolled.current = true;
+              scroll.current?.scrollTo({ x: Math.max(0, e.nativeEvent.layout.x - 24), animated: false });
+            }}
             style={[styles.chip, selected && styles.chipSelected]}
           >
-            <Text
-              style={[styles.chipText, selected && styles.chipTextSelected]}
-            >
+            <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
               {c.emoji} {c.name}
             </Text>
           </Pressable>
         );
       })}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  wrap: { flexDirection: "row", gap: 8, paddingRight: 8 },
   chip: {
     paddingHorizontal: 12,
     paddingVertical: 8,

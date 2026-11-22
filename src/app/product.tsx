@@ -10,10 +10,11 @@ import {
   Screen,
   Section,
   Stepper,
+  Tag,
   Txt,
   ui,
 } from "@/components/PantryUI";
-import { COLORS as C, emojiFor } from "@/constants/pantry";
+import { COLORS as C, emojiForProduct } from "@/constants/pantry";
 import {
   addProduct,
   updateProduct,
@@ -31,6 +32,7 @@ export default function ProductScreen() {
     date?: string;
     source?: string;
     ocrRaw?: string;
+    ocrConfidence?: string;
     quantity?: string;
     location?: string;
   }>();
@@ -171,16 +173,30 @@ export default function ProductScreen() {
           style={[ui.card, ui.row]}
         >
           <View style={[ui.image, { width: 48, height: 48, borderRadius: 10 }]}>
-            <Txt style={{ fontSize: 26 }}>{emojiFor(category)}</Txt>
+            <Txt style={{ fontSize: 26 }}>{emojiForProduct(name, category)}</Txt>
           </View>
           <View style={{ flex: 1, gap: 2 }}>
             <Txt style={{ fontSize: 15, fontWeight: "600" }}>{name}</Txt>
-            <Txt style={ui.muted}>{category}</Txt>
+            <Txt style={ui.muted}>
+              {category} · {location}
+            </Txt>
           </View>
           <Txt style={ui.link}>Editar</Txt>
         </Pressable>
       )}
       <Section title="Fecha de vencimiento" />
+      {params.source === "ocr" && !!params.ocrConfidence && (
+        <Tag
+          label={
+            params.ocrConfidence === "alta"
+              ? "Fecha leída · confianza alta"
+              : params.ocrConfidence === "media"
+                ? "Fecha leída · confianza media"
+                : "Fecha leída · confianza baja: revísala"
+          }
+          tone={params.ocrConfidence === "alta" ? "vigente" : params.ocrConfidence === "media" ? "info" : "proximo"}
+        />
+      )}
       <ExpirationInput
         value={date}
         onChangeText={(value) => {

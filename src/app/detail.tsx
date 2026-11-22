@@ -3,7 +3,7 @@ import { useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { Button } from "@/components/Button";
 import { InfoRow, Note, Screen, Txt, ui } from "@/components/PantryUI";
-import { COLORS as C, emojiFor } from "@/constants/pantry";
+import { COLORS as C, emojiForProduct } from "@/constants/pantry";
 import {
   removeProduct,
   useProducts,
@@ -79,7 +79,7 @@ export default function DetailScreen() {
       }
     >
       <View style={ui.image}>
-        <Txt style={{ fontSize: 72 }}>{emojiFor(p.category)}</Txt>
+        <Txt style={{ fontSize: 72 }}>{emojiForProduct(p.name, p.category)}</Txt>
       </View>
       <Txt style={ui.title}>{p.name}</Txt>
       <Txt style={{ color: daysUntil(p.expiresOn) < 0 ? C.danger : C.ok }}>

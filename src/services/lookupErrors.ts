@@ -5,7 +5,8 @@ export type LookupErrorCode =
   | "limite"
   | "llave_invalida"
   | "servicio_caido"
-  | "codigo_invalido";
+  | "codigo_invalido"
+  | "tiempo_agotado";
 
 const MESSAGES: Record<LookupErrorCode, string> = {
   sin_internet: "Sin conexión a internet. Revisa tu red e inténtalo de nuevo.",
@@ -14,6 +15,7 @@ const MESSAGES: Record<LookupErrorCode, string> = {
   llave_invalida: "La llave de Los Precios no es válida. Revisa el archivo .env.",
   servicio_caido: "El servicio de productos no responde. Inténtalo más tarde.",
   codigo_invalido: "El código de barras no es válido. Revisa los números (8 o 13 dígitos).",
+  tiempo_agotado: "La búsqueda tardó demasiado. Revisa tu conexión e inténtalo de nuevo.",
 };
 
 export class LookupError extends Error {

@@ -99,47 +99,162 @@ const MONTHS: Record<string, number> = {
 
 export const MONTH_ABBR = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 
-// Palabras que suelen acompañar a la fecha de vencimiento en las etiquetas.
-const KEYWORDS = /(VENC|VTO|EXP|CONSUM|BEST BEFORE|USE BY|BBE|CADUC|\bFV\b)/i;
-const NUMERIC = /\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4}|\d{2})\b/g;
-const TEXTUAL = /\b(\d{1,2})\s*([A-Za-z]{3})[A-Za-z]*\.?\s*(\d{4}|\d{2})\b/g;
+// Palabras que acompañan a la fecha de vencimiento y a la de fabricación.
+const KEYWORD = /VENC\w*|\bVTO\b|\bEXP\w*|CONSUM\w*|BEST BEFORE|USE BY|\bBBE\b|CADUC\w*|\bF\.?\s?V\b\.?/g;
+// Fabricación, envasado o lote: si la fecha más cercana va con estas, no es la de vencimiento.
+const MANUFACTURE = /\bELAB\w*|\bFAB\w*|\bPROD\w*|\bMFD\b|\bMFG\b|\bENV\w*|\bEMPAC\w*|\bL[O0]TE?\b|\bF\.?\s?E\b\.?/g;
+
+export type DateConfidence = "alta" | "media" | "baja";
+
+export interface DetectedDate {
+  date: Date;
+  /** Texto de la fecha tal como se leyó ("15/1O/2026"). */
+  raw: string;
+  /** alta: junto a VENCE/EXP…; media: era la única fecha; baja: hubo corrección, solo mes/año o varias sin palabra clave. */
+  confidence: DateConfidence;
+  /** Solo mes y año ("11/2026"): se toma el último día del mes. */
+  monthOnly: boolean;
+  /** Se corrigió una confusión del OCR (O→0, I/L→1, S→5, B→8). */
+  corrected: boolean;
+}
 
 function normalizeYear(raw: string): number {
   const y = Number(raw);
   return raw.length === 2 ? 2000 + y : y;
 }
 
-export interface DetectedDate {
+/** Último día del mes: (2026, 11) -> 30/11/2026 */
+function endOfMonth(year: number, month: number): Date | null {
+  if (month < 1 || month > 12 || year < 2000 || year > 2100) return null;
+  return new Date(year, month, 0);
+}
+
+// Algo con forma de fecha numérica, con letras que el OCR confunde con números:
+// "15/1O/2026", "O1-12-27", "2O26-11-15".
+const DATE_LIKE = /(^|[^A-Z0-9])([0-9OILSB]{1,4}(?:[/\-.][0-9OILSB]{1,4}){1,2})(?=$|[^A-Z0-9])/g;
+
+/** Corrige O→0, I/L→1, S→5, B→8 solo dentro de tokens con forma de fecha. */
+function fixDateTokens(line: string): { line: string; fixed: Set<string> } {
+  const fixed = new Set<string>();
+  const out = line.replace(DATE_LIKE, (all, before: string, token: string) => {
+    if ((token.match(/\d/g) ?? []).length < 2 || !/[OILSB]/.test(token)) return all;
+    const digits = token.replace(/O/g, "0").replace(/[IL]/g, "1").replace(/S/g, "5").replace(/B/g, "8");
+    fixed.add(digits);
+    return before + digits;
+  });
+  return { line: out, fixed };
+}
+
+type Found = {
   date: Date;
   raw: string;
+  index: number;
+  end: number;
+  monthOnly: boolean;
+  corrected: boolean;
+  kind: "keyword" | "manufacture" | "none";
+};
+
+/** Qué marca está más cerca ANTES de la fecha (o, si no hay, después). */
+function markerFor(line: string, index: number, end: number): Found["kind"] {
+  const before = line.slice(0, index);
+  const lastOf = (re: RegExp, s: string) => {
+    let pos = -1;
+    for (const m of s.matchAll(new RegExp(re.source, "g"))) pos = m.index ?? pos;
+    return pos;
+  };
+  const kw = lastOf(KEYWORD, before);
+  const mf = lastOf(MANUFACTURE, before);
+  if (kw >= 0 || mf >= 0) return kw > mf ? "keyword" : "manufacture";
+  const after = line.slice(end);
+  const kwA = after.search(new RegExp(KEYWORD.source));
+  const mfA = after.search(new RegExp(MANUFACTURE.source));
+  if (kwA >= 0 && (mfA < 0 || kwA < mfA)) return "keyword";
+  if (mfA >= 0) return "manufacture";
+  return "none";
 }
 
 /**
- * Busca fechas en el texto. Si alguna aparece en una línea con palabras como
- * "VENCE" o "EXP", se prefiere esa; si no, se toma la más lejana (la de
- * fabricación casi siempre es anterior a la de vencimiento).
+ * Busca la fecha de vencimiento en el texto del OCR.
+ * Formatos: 15/11/2026, 15-11-26, 15.11.26, 15 11 2026, 2026-11-15,
+ * 15 NOV 2026, 15NOV26, NOV 2026, 11/2026 y 11-26 (solo mes y año = último
+ * día del mes). Prefiere fechas junto a VENCE, EXP, F.V…; descarta las de
+ * fabricación (ELAB, FAB, LOTE…) si hay otra; ignora las absurdas (más de 5
+ * años adelante o más de 1 año atrás). Sin palabra clave, toma la más lejana.
+ *
+ *   detectExpirationDate("L0TE 123 VENC 15/1O/2026")
+ *   // { date: 15/10/2026, raw: "15/1O/2026", confidence: "baja", corrected: true, monthOnly: false }
  */
-export function detectExpirationDate(text: string): DetectedDate | null {
-  const found: { date: Date; raw: string; hasKeyword: boolean }[] = [];
+export function detectExpirationDate(text: string, today: Date = new Date()): DetectedDate | null {
+  const found: Found[] = [];
+  const min = addDays(today, -365);
+  const max = addDays(today, 5 * 365 + 1);
 
-  for (const line of text.split(/\r?\n/)) {
-    const hasKeyword = KEYWORDS.test(line);
+  for (const originalLine of text.split(/\r?\n/)) {
+    const upper = originalLine.toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const { line, fixed } = fixDateTokens(upper);
+    const hasKeyword = new RegExp(KEYWORD.source).test(line);
+    const taken: [number, number][] = [];
+    const free = (a: number, b: number) => taken.every(([x, y]) => b <= x || a >= y);
 
-    for (const m of line.matchAll(NUMERIC)) {
-      const date = buildDate(normalizeYear(m[3]), Number(m[2]), Number(m[1]));
-      if (date) found.push({ date, raw: m[0], hasKeyword });
+    const add = (m: RegExpMatchArray, date: Date | null, monthOnly: boolean) => {
+      const index = m.index ?? 0;
+      const lead = m[0].length - m[0].trimStart().length;
+      const start = index + lead;
+      const end = index + m[0].length;
+      if (!date || !free(start, end)) return;
+      taken.push([start, end]);
+      const raw = m[0].trim();
+      const corrected = [...fixed].some((t) => raw.includes(t));
+      // Mostrar el texto original (con la O), no el corregido.
+      const shown = corrected ? upper.slice(start, end).trim() : raw;
+      found.push({ date, raw: shown, index: start, end, monthOnly, corrected, kind: markerFor(line, start, end) });
+    };
+
+    // 1) Año primero: 2026-11-15
+    for (const m of line.matchAll(/\b(20\d{2})[/\-.](\d{1,2})[/\-.](\d{1,2})\b/g))
+      add(m, buildDate(Number(m[1]), Number(m[2]), Number(m[3])), false);
+    // 2) Día/mes/año: 15/11/2026, 15-11-26, 15.11.26
+    for (const m of line.matchAll(/\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4}|\d{2})\b/g))
+      add(m, buildDate(normalizeYear(m[3]), Number(m[2]), Number(m[1])), false);
+    // 3) Con espacios: 15 11 2026 (año de 2 dígitos solo si hay palabra clave)
+    for (const m of line.matchAll(/\b(\d{1,2}) +(\d{1,2}) +(\d{4}|\d{2})\b/g))
+      if (m[3].length === 4 || hasKeyword)
+        add(m, buildDate(normalizeYear(m[3]), Number(m[2]), Number(m[1])), false);
+    // 4) Mes en letras: 15 NOV 2026, 15NOV26, 15-NOV-26
+    for (const m of line.matchAll(/\b(\d{1,2})[\s\-/.]*([A-Z]{3})[A-Z]*\.?[\s\-/.]*(\d{4}|\d{2})\b/g)) {
+      const month = MONTHS[m[2]];
+      if (month) add(m, buildDate(normalizeYear(m[3]), month, Number(m[1])), false);
     }
-
-    for (const m of line.matchAll(TEXTUAL)) {
-      const month = MONTHS[m[2].toUpperCase()];
-      if (!month) continue;
-      const date = buildDate(normalizeYear(m[3]), month, Number(m[1]));
-      if (date) found.push({ date, raw: m[0], hasKeyword });
+    // 5) Solo mes y año en letras: NOV 2026 (año de 2 dígitos solo con palabra clave)
+    for (const m of line.matchAll(/\b([A-Z]{3})[A-Z]*\.?[\s\-/.]*(\d{4}|\d{2})\b/g)) {
+      const month = MONTHS[m[1]];
+      if (month && (m[2].length === 4 || hasKeyword))
+        add(m, endOfMonth(normalizeYear(m[2]), month), true);
     }
+    // 6) Solo mes y año en números: 11/2026, 11-26 (año de 2 dígitos solo con palabra clave)
+    for (const m of line.matchAll(/\b(\d{1,2})[/\-.](\d{4}|\d{2})\b/g))
+      if (m[2].length === 4 || hasKeyword) add(m, endOfMonth(normalizeYear(m[2]), Number(m[1])), true);
   }
 
-  if (found.length === 0) return null;
-  const pool = found.some((f) => f.hasKeyword) ? found.filter((f) => f.hasKeyword) : found;
+  const valid = found.filter((f) => f.date >= min && f.date <= max);
+  if (!valid.length) return null;
+
+  const withKeyword = valid.filter((f) => f.kind === "keyword");
+  const notManufacture = valid.filter((f) => f.kind !== "manufacture");
+  const pool = withKeyword.length ? withKeyword : notManufacture.length ? notManufacture : valid;
   pool.sort((a, b) => b.date.getTime() - a.date.getTime());
-  return { date: pool[0].date, raw: pool[0].raw };
+  const best = pool[0];
+
+  const distinct = new Set(valid.map((f) => toISODate(f.date))).size;
+  let confidence: DateConfidence = withKeyword.length ? "alta" : distinct === 1 ? "media" : "baja";
+  if (best.corrected || best.monthOnly) confidence = "baja";
+
+  return {
+    date: best.date,
+    raw: best.raw,
+    confidence,
+    monthOnly: best.monthOnly,
+    corrected: best.corrected,
+  };
 }

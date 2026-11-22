@@ -1,4 +1,5 @@
 import { isValidEan } from "@/utils/ean";
+import { guessCategory } from "@/utils/receipt";
 import { LookupError } from "./lookupErrors";
 import { getLpItem, type LpResult, type StorePrice } from "./losPrecios";
 import { getOffProduct, type OffProduct } from "./openFoodFacts";
@@ -24,9 +25,17 @@ export type LookupResult = {
 };
 
 /** Categorías de Open Food Facts (inglés o español) -> categorías de la app. */
+// Lo específico primero (igual que en utils/receipt): no comida, congelados,
+// condimentos y snacks antes que lácteos, panadería o frutas.
 const CATEGORY_RULES: [RegExp, string][] = [
+  [/pet ?food|dog|cat food|mascota|perro|gato/i, "Mascotas"],
+  [/detergent|cleaning|household|limpieza|aseo del hogar|toilet paper|papel higi/i, "Aseo del hogar"],
+  [/soap|jab[oó]n|shampoo|toothpaste|crema dental|deodorant|desodorante|hygiene|higiene|cosmetic|personal care/i, "Cuidado personal"],
+  [/frozen|congelad|ice cream|helado/i, "Congelados"],
+  [/sauce|salsa|condiment|condimento|\boil\b|aceite|salt\b|\bsal\b|sugar|az[uú]car|spice|especia|vinegar|vinagre|seasoning/i, "Condimentos y aceites"],
+  [/snack|biscuit|cookie|galleta|chocolate|candy|candies|confectioner|dulce|crisps|chips/i, "Snacks y dulces"],
   [/milk|leche|dair|lácte|lacte|yogur|chees|queso|butter|mantequilla/i, "Lácteos"],
-  [/bread|pan\b|panader|bakery|biscuit|galleta|cake/i, "Panadería"],
+  [/bread|pan\b|panader|bakery|cake/i, "Panadería"],
   [/canned|enlatad|conserva|tuna|atún|atun/i, "Enlatados"],
   [/meat|carne|pollo|chicken|beef|pork|cerdo|sausage|salchich|fish|pescado/i, "Carnes"],
   [/fruit|fruta|vegetable|verdura|hortaliza/i, "Frutas y verduras"],
@@ -60,11 +69,14 @@ async function combine(
     ean,
     nombre,
     marca,
-    // Si OFF no clasifica, se intenta con el nombre (de OFF o Los Precios).
+    // Si OFF no clasifica, se intenta con el nombre: primero las reglas de las
+    // facturas (español y marcas: "Protex avena" -> Cuidado personal).
     categoria:
       mapCategory(off?.categories) !== "Otros"
         ? mapCategory(off?.categories)
-        : mapCategory(nombre),
+        : guessCategory(nombre) !== "Otros"
+          ? guessCategory(nombre)
+          : mapCategory(nombre),
     tamano: clean(off?.quantity) ?? lp?.tamano ?? null,
     // Nunca se usa la imagen de Los Precios (no es parte de su API).
     imagen: imageUrl ? await saveImage(ean, imageUrl) : null,

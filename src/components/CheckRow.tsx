@@ -1,5 +1,5 @@
 import { Pressable, View } from "react-native";
-import { COLORS as C, emojiFor } from "@/constants/pantry";
+import { COLORS as C, emojiForProduct } from "@/constants/pantry";
 import { Txt, ui } from "./PantryUI";
 export function CheckRow({
   name,
@@ -49,7 +49,7 @@ export function CheckRow({
         {checked && <Txt style={{ color: C.white }}>✓</Txt>}
       </View>
       <View style={[ui.image, { width: 40, height: 40, borderRadius: 10 }]}>
-        <Txt style={{ fontSize: 24 }}>{emojiFor(category)}</Txt>
+        <Txt style={{ fontSize: 24 }}>{emojiForProduct(name, category)}</Txt>
       </View>
       <View style={{ flex: 1, gap: 2 }}>
         <Txt numberOfLines={2} style={{ fontWeight: "600", fontSize: 14 }}>

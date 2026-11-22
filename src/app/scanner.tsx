@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { ScannerLayout } from "@/components/ScannerLayout";
 import { OcrError, recognizeText } from "@/services/ocr";
+import { TimeoutError, withTimeout } from "@/utils/timeout";
 import { addDays, detectExpirationDate, formatDate } from "@/utils/expiration";
 
 export default function DateScannerScreen() {
@@ -28,7 +29,7 @@ export default function DateScannerScreen() {
     setBusy(true);
     setMessage(null);
     try {
-      const text = await recognizeText(uri, "date");
+      const text = await withTimeout(recognizeText(uri, "date"));
       const detected = detectExpirationDate(text);
       if (!detected) {
         setMessage(
@@ -43,10 +44,11 @@ export default function DateScannerScreen() {
           date: formatDate(detected.date),
           source: "ocr",
           ocrRaw: detected.raw,
+          ocrConfidence: detected.confidence,
         },
       });
     } catch (e) {
-      setMessage(e instanceof OcrError ? e.message : "No se pudo leer la foto. Inténtalo de nuevo.");
+      setMessage(e instanceof OcrError || e instanceof TimeoutError ? e.message : "No se pudo leer la foto. Inténtalo de nuevo.");
     } finally {
       setBusy(false);
     }

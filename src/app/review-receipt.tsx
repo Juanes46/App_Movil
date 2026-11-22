@@ -2,9 +2,12 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import { TextInput, View } from "react-native";
 import { Button } from "@/components/Button";
+import { CategoryChips } from "@/components/CategoryChips";
 import { CheckRow } from "@/components/CheckRow";
 import { ExpirationInput } from "@/components/ExpirationInput";
+import { LoadingSplash } from "@/components/LoadingSplash";
 import {
+  Chip,
   Icon,
   Note,
   Screen,
@@ -13,78 +16,94 @@ import {
   Txt,
   ui,
 } from "@/components/PantryUI";
+import { COLORS as C, emojiForProduct, ESTIMATED_DAYS } from "@/constants/pantry";
 import { addProducts } from "@/services/productStore";
 import { addDays, formatDate, parseDate } from "@/utils/expiration";
-import { getPendingReceipt, setPendingReceipt } from "@/utils/receipt";
-import { COLORS as C, ESTIMATED_DAYS } from "@/constants/pantry";
 import { suggestLocation } from "@/utils/location";
-const samples = [
-  {
-    name: "Leche entera 1 L",
-    category: "Lácteos",
-    location: "Nevera",
-    quantity: 2,
-    days: 7,
-  },
-  {
-    name: "Huevos AA x12",
-    category: "Lácteos",
-    location: "Nevera",
-    quantity: 1,
-    days: 21,
-  },
-  {
-    name: "Arroz blanco 1 kg",
-    category: "Granos",
-    location: "Alacena",
-    quantity: 1,
-    days: 365,
-  },
-  {
-    name: "Atún en agua",
-    category: "Enlatados",
-    location: "Alacena",
-    quantity: 3,
-    days: 730,
-  },
-  {
-    name: "Tomate chonto",
-    category: "Frutas y verduras",
-    location: "Nevera",
-    quantity: 1,
-    days: 5,
-  },
-  { name: "", category: "Otros", location: "Alacena", quantity: 1, days: 30 },
+import { estimateDays, getPendingReceipt, setPendingReceipt } from "@/utils/receipt";
+import { TimeoutError, withTimeout } from "@/utils/timeout";
+
+const LOCATIONS = ["Nevera", "Congelador", "Alacena"] as const;
+
+/** 39670 -> "$39.670" */
+const formatPrice = (n: number) => "$" + String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+
+type Row = {
+  name: string;
+  category: string;
+  location: string;
+  quantity: number;
+  days: number;
+  raw?: string;
+  lowConfidence?: boolean;
+};
+
+const samples: Row[] = [
+  { name: "Leche entera 1 L", category: "Lácteos", location: "Nevera", quantity: 2, days: 7 },
+  { name: "Huevos AA x12", category: "Lácteos", location: "Nevera", quantity: 1, days: 21 },
+  { name: "Arroz blanco 1 kg", category: "Granos", location: "Alacena", quantity: 1, days: 365 },
+  { name: "Atún en agua", category: "Enlatados", location: "Alacena", quantity: 3, days: 730 },
+  { name: "Tomate chonto", category: "Frutas y verduras", location: "Nevera", quantity: 1, days: 5 },
+  { name: "Jabón Protex avena", category: "Cuidado personal", location: "Alacena", quantity: 1, days: 730 },
+  { name: "Prod xq 12", category: "Otros", location: "Alacena", quantity: 1, days: 30, lowConfidence: true },
 ];
+
 export default function ReviewReceiptScreen() {
   const router = useRouter();
   // Factura leída por el OCR; si no hay, se muestra la factura de ejemplo.
   const [scanned] = useState(() => getPendingReceipt());
+  // Los días estimados se cuentan desde la fecha de compra de la factura (si se leyó).
+  const base = scanned?.purchaseDate ?? new Date();
   const [rows, setRows] = useState(() => {
-    const source = scanned
-      ? scanned.items.map((it) => ({
+    const source: Row[] = scanned
+      ? scanned.items
+          .filter((it) => it.name.trim().length >= 2) // nada de ítems vacíos
+          .map((it) => ({
           name: it.name,
           category: it.category,
           location: suggestLocation(it.name, it.category),
           quantity: it.quantity,
           days: it.days ?? ESTIMATED_DAYS[it.category] ?? 30,
+          raw: it.raw,
+          lowConfidence: it.lowConfidence,
         }))
       : samples;
-    return source.map((p, i) => ({
-      ...p,
-      selected: scanned ? true : i < 5,
-      date: formatDate(addDays(new Date(), p.days)),
-      estimated: true,
-    }));
+    return source
+      .map((p) => ({
+        ...p,
+        // Los dudosos no se agregan solos: el usuario los revisa y los marca.
+        selected: !p.lowConfidence,
+        date: formatDate(addDays(base, p.days)),
+        estimated: true,
+        locationTouched: false,
+      }))
+      // Los de baja confianza al final, con aviso.
+      .sort((a, b) => Number(!!a.lowConfidence) - Number(!!b.lowConfidence));
   });
   const [editing, setEditing] = useState(false);
   const [showText, setShowText] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const selected = rows.filter((p) => p.selected);
+  const toReview = rows.filter((p) => p.lowConfidence).length;
+
   function update(i: number, values: Partial<(typeof rows)[number]>) {
     setRows((v) => v.map((p, j) => (i === j ? { ...p, ...values } : p)));
   }
+
+  // Al cambiar la categoría: la ubicación y la fecha estimada la siguen
+  // (salvo que el usuario ya las haya elegido a mano).
+  function changeCategory(i: number, category: string) {
+    const p = rows[i];
+    const days = estimateDays(p.name, category);
+    update(i, {
+      category,
+      lowConfidence: category === "Otros" ? p.lowConfidence : false,
+      ...(p.locationTouched ? {} : { location: suggestLocation(p.name, category) }),
+      ...(p.estimated ? { days, date: formatDate(addDays(base, days)) } : {}),
+    });
+  }
+
   async function save() {
     if (!selected.length || saving) return;
     if (selected.some((p) => p.name.trim().length < 2 || !parseDate(p.date))) {
@@ -95,39 +114,42 @@ export default function ReviewReceiptScreen() {
     setSaving(true);
     setError("");
     try {
-      await addProducts(
-        selected.map((p) => ({
-          name: p.name.trim(),
-          category: p.category,
-          location: p.location,
-          quantity: p.quantity,
-          expiresOn: parseDate(p.date)!,
-          estimated: p.estimated,
-        })),
+      await withTimeout(
+        addProducts(
+          selected.map((p) => ({
+            name: p.name.trim(),
+            category: p.category,
+            location: p.location,
+            quantity: p.quantity,
+            expiresOn: parseDate(p.date)!,
+            estimated: p.estimated,
+          })),
+        ),
       );
       setPendingReceipt(null);
       router.replace("/pantry");
-    } catch {
-      setError("No se pudo guardar la factura. Intenta nuevamente.");
+    } catch (e) {
+      setError(
+        e instanceof TimeoutError
+          ? "Guardar tardó demasiado. Toca “Agregar” para intentarlo de nuevo."
+          : "No se pudo guardar la factura. Intenta nuevamente.",
+      );
       setSaving(false);
     }
   }
+
   return (
     <Screen
       title="Revisar factura"
       footer={
         <>
           <Button
-            title={
-              saving ? "Guardando…" : `Agregar ${selected.length} a la despensa`
-            }
+            title={saving ? "Guardando…" : `Agregar ${selected.length} a la despensa`}
             disabled={!selected.length || saving}
             onPress={save}
           />
           <Button
-            title={
-              editing ? "Terminar revisión" : "Editar fechas de vencimiento"
-            }
+            title={editing ? "Terminar revisión" : "Editar productos y fechas"}
             variant="secondary"
             onPress={() => setEditing(!editing)}
           />
@@ -135,13 +157,7 @@ export default function ReviewReceiptScreen() {
       }
     >
       <View style={[ui.card, ui.row]}>
-        <View
-          style={{
-            padding: 10,
-            borderRadius: 10,
-            backgroundColor: C.primarySoft,
-          }}
-        >
+        <View style={{ padding: 10, borderRadius: 10, backgroundColor: C.primarySoft }}>
           <Icon name="receiptReview" size={24} />
         </View>
         <View style={{ flex: 1 }}>
@@ -155,18 +171,49 @@ export default function ReviewReceiptScreen() {
           </Txt>
         </View>
       </View>
+      {scanned?.totalMatches === true && (
+        <View style={[ui.card, { backgroundColor: C.okSoft, borderColor: C.okSoft }]}>
+          <Txt style={{ color: C.ok, fontWeight: "600" }}>
+            ✓ La suma coincide con el total de la factura ({formatPrice(scanned.total ?? 0)})
+          </Txt>
+          <Txt style={{ color: C.ok, fontSize: 12 }}>Lectura confiable.</Txt>
+        </View>
+      )}
+      {scanned?.totalMatches === false && (
+        <View
+          accessibilityRole="alert"
+          style={[ui.card, { backgroundColor: C.dangerSoft, borderColor: C.danger }]}
+        >
+          <Txt style={{ color: C.danger, fontWeight: "600" }}>
+            La suma no coincide con el total: revisa los productos
+          </Txt>
+          <Txt style={{ color: C.text, fontSize: 12 }}>
+            Suma leída {formatPrice(scanned.sum)} · total de la factura{" "}
+            {formatPrice(scanned.total ?? 0)}. Puede faltar un producto o haber un precio mal leído.
+          </Txt>
+        </View>
+      )}
+      {toReview > 0 && (
+        <View style={[ui.card, { backgroundColor: C.warningSoft, borderColor: C.warning }]}>
+          <Txt style={{ color: C.warningText, fontWeight: "600" }}>
+            ⚠ {toReview === 1 ? "1 línea dudosa" : `${toReview} líneas dudosas`} al final de la lista
+          </Txt>
+          <Txt style={{ color: C.warningText, fontSize: 12 }}>
+            No reconocimos bien su nombre o su categoría: no se agregan hasta que las marques.
+          </Txt>
+        </View>
+      )}
       <Note>
-        La factura no trae fecha de vencimiento: calculamos una fecha
-        aproximada según el tipo de producto. Corrígela con “Editar fechas” o
-        escanéala después en el envase. Revisa también los nombres abreviados.
+        La factura no trae fecha de vencimiento: calculamos una fecha aproximada según el tipo
+        de producto
+        {scanned?.purchaseDate
+          ? `, contando desde la compra (${formatDate(scanned.purchaseDate)})`
+          : ""}
+        . Corrígela con “Editar” o escanéala después en el envase.
       </Note>
       {scanned && (
         <View style={{ gap: 8 }}>
-          <Txt
-            accessibilityRole="button"
-            onPress={() => setShowText(!showText)}
-            style={ui.link}
-          >
+          <Txt accessibilityRole="button" onPress={() => setShowText(!showText)} style={ui.link}>
             {showText ? "Ocultar texto leído" : "Ver texto leído por la cámara"}
           </Txt>
           {showText && (
@@ -181,21 +228,22 @@ export default function ReviewReceiptScreen() {
       <Section
         title="Productos detectados"
         action={selected.length ? "Quitar todos" : "Elegir todos"}
-        onPress={() =>
-          setRows((v) =>
-            v.map((p) => ({ ...p, selected: !selected.length && !!p.name })),
-          )
-        }
+        onPress={() => setRows((v) => v.map((p) => ({ ...p, selected: !selected.length && !!p.name })))}
       />
       {rows.map((p, i) => (
-        <View key={i} style={{ gap: 8 }}>
+        <View key={i} style={{ gap: 6 }}>
+          {p.lowConfidence && (
+            <Txt style={{ color: C.warningText, fontSize: 12, fontWeight: "600" }}>
+              ⚠ Revisa este producto
+            </Txt>
+          )}
           <CheckRow
             {...p}
-            name={p.name || 'No reconocido: "DETERG LIQ"'}
+            name={p.name || "Sin nombre"}
             checked={p.selected}
             subtitle={
               p.name
-                ? `${p.category} · ${p.location} · ${p.estimated ? `vence aprox. ${p.date}` : `vence ${p.date}`}`
+                ? `${emojiForProduct(p.name, p.category)} ${p.category} · ${p.location} · ${p.estimated ? `vence aprox. ${p.date}` : `vence ${p.date}`}`
                 : "Corrige el nombre antes de agregar"
             }
             onPress={() => {
@@ -203,6 +251,11 @@ export default function ReviewReceiptScreen() {
               if (!p.name) setEditing(true);
             }}
           />
+          {!!p.raw && (
+            <Txt numberOfLines={2} style={{ fontSize: 11, color: C.muted }}>
+              Leído: “{p.raw}”
+            </Txt>
+          )}
           {editing && (
             <View style={ui.card}>
               <TextInput
@@ -210,16 +263,28 @@ export default function ReviewReceiptScreen() {
                 value={p.name}
                 onChangeText={(name) => update(i, { name })}
                 placeholder="Corregir nombre"
+                placeholderTextColor={C.muted}
                 style={ui.input}
               />
+              <Txt style={ui.muted}>Categoría</Txt>
+              <CategoryChips value={p.category} onChange={(c) => changeCategory(i, c)} />
+              <Txt style={ui.muted}>Ubicación</Txt>
+              <View style={[ui.row, { flexWrap: "wrap", gap: 8 }]}>
+                {LOCATIONS.map((l) => (
+                  <Chip
+                    key={l}
+                    label={l}
+                    active={p.location === l}
+                    onPress={() => update(i, { location: l, locationTouched: true })}
+                  />
+                ))}
+              </View>
+              <Txt style={ui.muted}>Fecha de vencimiento</Txt>
               <ExpirationInput
                 value={p.date}
                 onChangeText={(date) => update(i, { date, estimated: false })}
               />
-              <Stepper
-                value={p.quantity}
-                onChange={(quantity) => update(i, { quantity })}
-              />
+              <Stepper value={p.quantity} onChange={(quantity) => update(i, { quantity })} />
             </View>
           )}
         </View>
@@ -229,6 +294,7 @@ export default function ReviewReceiptScreen() {
           {error}
         </Txt>
       )}
+      <LoadingSplash visible={saving} message="Guardando…" />
     </Screen>
   );
 }

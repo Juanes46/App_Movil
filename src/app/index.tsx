@@ -15,7 +15,7 @@ import {
   ui,
 } from "@/components/PantryUI";
 import { ProductRow } from "@/components/ProductRow";
-import { COLORS as C, emojiFor } from "@/constants/pantry";
+import { COLORS as C, emojiForProduct } from "@/constants/pantry";
 import { useRefresh } from "@/hooks/use-refresh";
 import {
   refreshProducts,
@@ -160,7 +160,7 @@ export default function HomeScreen() {
                     onPress={() => router.push({ pathname: "/detail", params: { id: p.id } })}
                   >
                     <View style={[ui.image, { height: 66, borderRadius: 10 }]}>
-                      <Txt style={{ fontSize: 34 }}>{emojiFor(p.category)}</Txt>
+                      <Txt style={{ fontSize: 34 }}>{emojiForProduct(p.name, p.category)}</Txt>
                     </View>
                     <Txt numberOfLines={1} style={{ fontSize: 13, fontWeight: "600" }}>
                       {p.name}

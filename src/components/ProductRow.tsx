@@ -1,5 +1,5 @@
 import { Pressable, View } from "react-native";
-import { COLORS as C, emojiFor } from "@/constants/pantry";
+import { COLORS as C, emojiForProduct } from "@/constants/pantry";
 import type { Product } from "@/services/productStore";
 import { daysUntil, getStatus } from "@/utils/expiration";
 import { Tag, Txt, ui } from "./PantryUI";
@@ -17,7 +17,7 @@ export function ProductRow({ product, onPress }: { product: Product; onPress: ()
       style={[ui.card, ui.row, { padding: 10, minHeight: 70 }]}
     >
       <View style={[ui.image, { width: 48, height: 48, borderRadius: 10 }]}>
-        <Txt style={{ fontSize: 26 }}>{emojiFor(product.category)}</Txt>
+        <Txt style={{ fontSize: 26 }}>{emojiForProduct(product.name, product.category)}</Txt>
       </View>
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
         <Txt numberOfLines={1} style={{ fontWeight: "600", fontSize: 15 }}>

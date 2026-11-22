@@ -3,7 +3,6 @@ import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { useIsFocused, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Linking,
   Platform,
   Pressable,
@@ -12,6 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "./Button";
+import { LoadingSplash } from "./LoadingSplash";
 import { Icon, Txt, ui } from "./PantryUI";
 import { COLORS as C } from "@/constants/pantry";
 import { ocrMode } from "@/services/ocr";
@@ -25,8 +25,12 @@ type Props = {
   onPhoto?: (uri: string) => void;
   /** Si se pasa, la cámara lee códigos EAN-13 / EAN-8 solos (sin tomar foto). */
   onBarcode?: (code: string) => void;
-  /** Mientras el OCR lee la foto. */
+  /** Mientras el OCR lee la foto: muestra la pantalla de carga (LoadingSplash). */
   busy?: boolean;
+  /** Tiempo máximo de la pantalla de carga (por defecto 30 s). */
+  busyTimeoutMs?: number;
+  /** Texto de la pantalla de carga; por defecto según `kind`. */
+  busyMessage?: string;
   /** Mensaje de error o ayuda bajo el visor. */
   message?: string | null;
   manualLabel?: string;
@@ -85,6 +89,8 @@ export function ScannerLayout({
   onPhoto,
   onBarcode,
   busy = false,
+  busyMessage,
+  busyTimeoutMs,
   message,
   manualLabel,
 }: Props) {
@@ -254,12 +260,6 @@ export function ScannerLayout({
                 style={frameStyle}
               >
                 {!live && <Txt style={{ fontSize: 13 }}>Vista de cámara</Txt>}
-                {busy && (
-                  <View style={{ alignItems: "center", gap: 8 }}>
-                    <ActivityIndicator color={C.white} size="large" />
-                    <Txt style={{ color: C.white, fontWeight: "600" }}>Leyendo…</Txt>
-                  </View>
-                )}
               </Pressable>
               <View
                 style={
@@ -387,6 +387,11 @@ export function ScannerLayout({
           </Pressable>
         )}
       </View>
+      <LoadingSplash
+        visible={busy}
+        timeoutMs={busyTimeoutMs}
+        message={busyMessage ?? (kind === "receipt" ? "Leyendo la factura…" : kind === "date" ? "Leyendo la fecha…" : "Buscando el producto…")}
+      />
     </SafeAreaView>
   );
 }
