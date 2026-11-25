@@ -2,6 +2,7 @@ import { Pressable, View } from "react-native";
 import { COLORS as C, emojiForProduct } from "@/constants/pantry";
 import type { Product } from "@/services/productStore";
 import { daysUntil, getStatus } from "@/utils/expiration";
+import { formatQuantity } from "@/utils/quantity";
 import { Tag, Txt, ui } from "./PantryUI";
 
 /** Fila de producto: imagen, nombre, categoría · ubicación y etiqueta de estado. */
@@ -24,7 +25,7 @@ export function ProductRow({ product, onPress }: { product: Product; onPress: ()
           {product.name}
         </Txt>
         <Txt numberOfLines={1} style={{ color: C.muted, fontSize: 12 }}>
-          {product.category} · {product.location ?? "Alacena"} · x{product.quantity ?? 1}
+          {product.category} · {product.location ?? "Alacena"} · {formatQuantity(product.quantity, product.unit)}
         </Txt>
         {product.estimated && (
           <Txt style={{ color: C.primaryDark, fontSize: 10 }}>Fecha estimada</Txt>

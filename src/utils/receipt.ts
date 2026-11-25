@@ -27,6 +27,41 @@ export interface ReceiptItem {
   ean?: string;
   /** Valor total de la línea en pesos (cantidad × precio), si se leyó. */
   total?: number;
+  /** Descripción tal como vino en la factura, sin cantidad ni precio ("BARQUILLOS SU"). Clave de los nombres aprendidos sin EAN. */
+  sourceText?: string;
+  /** Unidad de la cantidad: "un" (unidades) o "kg" (por peso). */
+  unit?: "un" | "kg";
+  /** El nombre salió de lo que el usuario corrigió antes ("Nombre recordado"). */
+  fromLearned?: boolean;
+  /** Ubicación aprendida para este producto, si el usuario la corrigió antes. */
+  learnedLocation?: string;
+  /** Unitario × cantidad no da el total de la línea: cantidad dudosa. */
+  qtyMismatch?: boolean;
+  /** La fila no traía cantidad ni precio (foto recortada): cantidad 1 por defecto, revisar. */
+  qtyUnknown?: boolean;
+  /** El código no pasaba el dígito de control y se rescató (ver rescueEan). */
+  rescued?: boolean;
+  /** De dónde salió el nombre: "Recordado", "Conocido", "Open Food Facts", "Los Precios", "UPCitemdb", "Factura"… */
+  nameSource?: string;
+}
+
+/** Cómo se leyó cada línea (para depurar en modo desarrollo). */
+export interface ReceiptDiagnostics {
+  /** Líneas con algo que parece código de barras. */
+  codeLines: number;
+  /** Códigos que pasaron el dígito de control (directo o corrigiendo letras). */
+  validCodes: number;
+  /** Códigos rescatados cambiando un dígito. */
+  rescued: number;
+  /** Líneas con código inválido que se descartaron. */
+  discarded: number;
+  /** Decisión por línea: regla usada y EAN validado. */
+  lines: { text: string; rule: string; ean?: string }[];
+}
+
+export interface ParseOptions {
+  /** Códigos conocidos (diccionario + nombres recordados): permiten rescatar un código mal leído. */
+  knownEans?: Set<string>;
 }
 
 export interface ParsedReceipt {
@@ -44,6 +79,9 @@ export interface ParsedReceipt {
   purchaseDate: Date | null;
   /** Factura con columnas (D1, Ara): solo se aceptan filas con código o columnas. */
   columnar: boolean;
+  /** "NUM ART ENTREGADOS: N" de la factura (unidades), si se leyó. */
+  expectedCount: number | null;
+  diagnostics: ReceiptDiagnostics;
 }
 
 // Líneas que no son productos: totales, pagos, datos legales, encabezado.
@@ -66,8 +104,6 @@ const TAX_CODE_SUFFIX = /(?:\s+[A-Z]{1,2})+$/;
 const WEIGHT_LINE = /^\s*[\d.,]+\s*(?:KG|KGS|GR|GRS|G|LB)\b/;
 // Línea con solo un precio (el OCR a veces separa nombre y precio)
 const PRICE_ONLY = /^\s*\$?\s*(?:\d{1,3}(?:[.,]\d{3})+|\d{3,6})(?:[.,]\d{1,2})?(?:\s+[A-Z])?\s*$/;
-// Cantidad al inicio de la línea: "2 X LECHE…". (Al final no se toma: "HUEVOS X12" es el tamaño.)
-const QTY_PREFIX = /^\s*(\d{1,2})\s*[X*]\s+/;
 // Código de barras o PLU al inicio de la línea
 const CODE_PREFIX = /^\s*\d{4,14}\s+/;
 // Precio al final: "4.500", "12,900", "$ 4.500 A", "4500.00"
@@ -95,7 +131,7 @@ export const CATEGORY_WORDS: [string, RegExp][] = [
   ["Cuidado personal", PERSONAL],
   ["Congelados", /\b(HELADOS?|PALETAS?|CONGELAD\w*|NUGGETS?|HIELO|FRANCESA|APANAD\w*|HAMBURGUESAS?|PIZZA)\b/],
   ["Condimentos y aceites", /\b(CONDIM\w*|SAZON\w*|ADOBO|CALDOS?|CUBITOS?|MAGGI|RICOSTILLA|SALSAS?|KETCHUP|MAYONESA|MOSTAZA|FRUCO|VINAGRE|ACEITE|OLIVA|MARGARINA|SAL|AZUCAR|PANELA|PIMIENTA|COMINO|OREGANO|CANELA|COLOR|LA CONSTANCIA|BADIA|EL REY)\b/],
-  ["Snacks y dulces", /\b(GALLETAS?|GALL|NOEL|OREO|FESTIVAL|SALTIN|DUCALES|CHOCOLATES?|CHOCOLATINA|JET|GOMAS?|DULCES?|CARAMELOS?|CHUPETAS?|CHICLES?|BOCADILLO|MANI|PAPAS FRITAS|MARGARITA|DETODITO|CHEETOS|DORITOS|TODO RICO|CHITOS|ROSQUITAS|PAPAS MARGARITA)\b/],
+  ["Snacks y dulces", /\b(GALLETAS?|BARQUILLOS?|GALL|NOEL|OREO|FESTIVAL|SALTIN|DUCALES|CHOCOLATES?|CHOCOLATINA|JET|GOMAS?|DULCES?|CARAMELOS?|CHUPETAS?|CHICLES?|BOCADILLO|MANI|PAPAS FRITAS|MARGARITA|DETODITO|CHEETOS|DORITOS|TODO RICO|CHITOS|ROSQUITAS|PAPAS MARGARITA)\b/],
   ["Lácteos", /\b(LECHE|LCH|YOGU?R|KUMIS|KEFIR|QUESO|QSO|CUAJADA|MANTEQ\w*|CREMA DE LECHE|AVENA (?:LIQ\w*|ALPINA)|ALPINA|ALQUERIA|COLANTA|HUEVOS?|HVO)\b/],
   ["Panadería", /\b(PAN|PANES|TAJADO|TAJ|MOGOLLA|TORTILL\w*|CROISSANT|TOSTADAS?|BIMBO|PONQUE|DONUTS?|DONAS?|TOR|TORTA|BROWNIE|AREPAS?|PANDEBONO|ALMOJABANAS?)\b/],
   ["Enlatados", /\b(ATUN|SARDINAS?|LATA|ENLAT\w*|MAIZ TIERNO|VAN CAMPS)\b/],
@@ -175,11 +211,13 @@ export function estimateDays(name: string, category: string): number {
   return ESTIMATED_DAYS[category] ?? 30;
 }
 
-/** "LECHE ENTERA ALQUERIA 1L" -> "Leche entera alqueria 1L" ("3X110G" queda en mayúsculas) */
+/** "LECHE ENTERA ALQUERIA 1L" -> "Leche entera alqueria 1L" ("3X110G" y "X12" quedan en mayúsculas) */
 function sentenceCase(s: string): string {
   const words = s.toLowerCase().split(/\s+/).filter(Boolean);
   const out = words.map((w) =>
-    /^\d+(?:[.,]\d+)?[a-z]{1,3}$/.test(w) || /^\d+x\d+(?:[.,]\d+)?[a-z]{0,3}$/.test(w)
+    /^\d+(?:[.,]\d+)?[a-z]{1,3}$/.test(w) ||
+    /^\d+x\d+(?:[.,]\d+)?[a-z]{0,3}$/.test(w) ||
+    /^x\d+$/.test(w)
       ? w.toUpperCase()
       : w,
   );
@@ -279,11 +317,11 @@ export function parseMoney(s: string): number {
 }
 
 /**
- * Código de barras de la fila: corrige O→0, I/L→1, S→5, B→8 y, si aun así el
- * dígito de control no cuadra, prueba cambiar UN dígito que el OCR suele
- * confundir (0↔8, 1↔7, 5↔6, 3↔8). Solo acepta si hay una única corrección.
+ * Código de barras de la fila: corrige las letras que el OCR confunde con
+ * números (O→0, I/L→1, S→5, B→8, G→6, Z→2) y acepta solo si el dígito de
+ * control cuadra. (Cambiar dígitos es otra cosa: ver rescueEan.)
  *   fixEan("77OO3O4448241") -> { ean: "7700304448241", corrected: true }
- *   fixEan("7700304448242") -> { ean: null, corrected: false }  (ninguna corrección única)
+ *   fixEan("7700304448242") -> { ean: null, corrected: false }  (dígito de control inválido)
  */
 export function fixEan(token: string): { ean: string | null; corrected: boolean } {
   const digits = token
@@ -296,19 +334,95 @@ export function fixEan(token: string): { ean: string | null; corrected: boolean 
   const lettered = digits !== token;
   if (!/^\d+$/.test(digits)) return { ean: null, corrected: false };
   if (isValidEan(digits)) return { ean: digits, corrected: lettered };
-  if (digits.length !== 13 && digits.length !== 8) return { ean: null, corrected: false };
-  const swaps: Record<string, string[]> = {
-    "0": ["8"], "8": ["0", "3"], "1": ["7"], "7": ["1"], "5": ["6"], "6": ["5"], "3": ["8"],
-  };
-  const candidates = new Set<string>();
+  return { ean: null, corrected: false };
+}
+
+/** Solo dígitos tras corregir letras ("77OO3O..." -> "7700300..."), o null. */
+function codeDigits(token: string): string | null {
+  const d = token
+    .replace(/[OQD]/g, "0")
+    .replace(/[IL]/g, "1")
+    .replace(/S/g, "5")
+    .replace(/B/g, "8")
+    .replace(/G/g, "6")
+    .replace(/Z/g, "2");
+  return /^\d+$/.test(d) ? d : null;
+}
+
+// Dígitos que el OCR confunde entre sí (en los dos sentidos)
+const RESCUE_SWAPS: Record<string, string[]> = {
+  "0": ["8", "9"], "8": ["0", "3", "6"], "1": ["7"], "7": ["1"], "3": ["8"],
+  "5": ["6"], "6": ["5", "8"], "9": ["0"],
+};
+
+/**
+ * Rescate de un código que no pasa el dígito de control: prueba cambiar UN
+ * dígito con confusiones típicas (0↔8, 1↔7, 3↔8, 5↔6, 6↔8, 0↔9). Acepta una
+ * variante solo si (a) es un código conocido (diccionario o nombres
+ * recordados), o (b) es la ÚNICA variante válida y comparte el prefijo de las
+ * demás filas (p. ej. 7700304 de D1). Nunca inventa un código fuera de eso.
+ *   rescueEan("7700304443241", { known: new Set(["7700304448241"]) }) -> "7700304448241"  (un 8 leído como 3)
+ *   rescueEan("7700304443241", {})                                     -> null
+ */
+export function rescueEan(
+  digits: string,
+  ctx: { known?: Set<string>; prefix?: string | null } = {},
+): string | null {
+  if (!/^(\d{8}|\d{13})$/.test(digits) || isValidEan(digits)) return null;
+  const variants = new Set<string>();
   for (let i = 0; i < digits.length; i++)
-    for (const alt of swaps[digits[i]] ?? []) {
-      const c = digits.slice(0, i) + alt + digits.slice(i + 1);
-      if (isValidEan(c)) candidates.add(c);
+    for (const alt of RESCUE_SWAPS[digits[i]] ?? []) {
+      const v = digits.slice(0, i) + alt + digits.slice(i + 1);
+      if (isValidEan(v)) variants.add(v);
     }
-  return candidates.size === 1
-    ? { ean: [...candidates][0], corrected: true }
-    : { ean: null, corrected: false };
+  const list = [...variants];
+  const known = list.filter((v) => ctx.known?.has(v));
+  if (known.length === 1) return known[0];
+  if (ctx.prefix && list.length === 1 && list[0].startsWith(ctx.prefix)) return list[0];
+  return null;
+}
+
+type CodeHit = {
+  start: number;
+  end: number;
+  /** EAN válido (por dígito de control, corregido o rescatado) o null si no se pudo. */
+  ean: string | null;
+  corrected: boolean;
+  rescued: boolean;
+};
+
+/**
+ * Busca un código de barras en la línea (8 a 14 caracteres, 6+ dígitos).
+ * Devuelve el primero válido (o rescatado); si solo hay inválidos, el primero
+ * con ean null (para el diagnóstico).
+ */
+function findCode(upper: string, ctx: { known?: Set<string>; prefix?: string | null }): CodeHit | null {
+  let invalid: CodeHit | null = null;
+  for (const m of upper.matchAll(/\S+/g)) {
+    const token = m[0].replace(/[.,;:]+$/, "");
+    if (!/^[0-9A-Z]{8,14}$/.test(token) || (token.match(/\d/g) ?? []).length < 6) continue;
+    const start = m.index ?? 0;
+    const end = start + m[0].length;
+    const fixed = fixEan(token);
+    if (fixed.ean) return { start, end, ean: fixed.ean, corrected: fixed.corrected, rescued: false };
+    const digits = codeDigits(token);
+    const rescued = digits ? rescueEan(digits, ctx) : null;
+    if (rescued) return { start, end, ean: rescued, corrected: true, rescued: true };
+    if (!invalid && digits && (digits.length === 13 || digits.length === 8))
+      invalid = { start, end, ean: null, corrected: false, rescued: false };
+  }
+  return invalid;
+}
+
+/** Código de una columna (D1, Ara): corrección de letras y, si hace falta, rescate. */
+function resolveCode(token: string, ctx: { known?: Set<string>; prefix?: string | null }) {
+  const fixed = fixEan(token);
+  if (fixed.ean) return { ...fixed, rescued: false };
+  const digits = codeDigits(token);
+  const rescued = digits ? rescueEan(digits, ctx) : null;
+  return rescued
+    ? { ean: rescued, corrected: true, rescued: true }
+    : { ean: null, corrected: false, rescued: false };
 }
 
 /* ------------------------------------------------------------------ */
@@ -345,6 +459,19 @@ const COMPLETIONS: [RegExp, string][] = [
   [/\bTORTILL\b/, "TORTILLA"],
   [/\bMARGARIN\b/, "MARGARINA"],
   [/\bBLANQUEAD\b/, "BLANQUEADOR"],
+  [/\bMANI CON PASA$/, "MANÍ CON PASAS"],
+  [/\bCON PASA$/, "CON PASAS"],
+  [/\bBARQUILL\b/, "BARQUILLOS"],
+  [/\bAREQUIP\w*$/, "AREQUIPE"],
+  [/\bVAINIL\w*$/, "VAINILLA"],
+  [/\bCHOCOLAT\b/, "CHOCOLATE"],
+  [/\bGASEOS\b/, "GASEOSA"],
+  [/\bNATURA\b/, "NATURAL"],
+  [/\bAVENA HOJUEL\w*$/, "AVENA HOJUELAS"],
+  [/\bLENTEJ\b/, "LENTEJAS"],
+  [/\bFRIJOL\b/, "FRIJOLES"],
+  [/\bDESINFECT\w*$/, "DESINFECTANTE"],
+  [/\bLAVALOZ\w*$/, "LAVALOZA"],
 ];
 
 /** "MORA CONGELAD" -> "MORA CONGELADA", "PAPAS A LA FR" -> "PAPAS A LA FRANCESA" */
@@ -352,6 +479,121 @@ export function completeTruncated(name: string): string {
   let out = name.trim();
   for (const [re, full] of COMPLETIONS) out = out.replace(re, full);
   return out;
+}
+
+// Palabras de enlace que no pueden terminar un nombre ("GALLETAS DE")
+const CONNECTORS = new Set(["DE", "DEL", "LA", "EL", "LOS", "LAS", "PARA", "CON", "EN", "A", "Y", "AL", "SIN", "X"]);
+// Palabras cortas (≤ 3 letras) que sí son palabras o abreviaturas válidas al final
+const SHORT_OK = new Set([
+  "SAL", "TE", "PAN", "RES", "AJO", "UVA", "AJI", "MIX", "ROA", "SOL", "OSO", "LUX", "AXE", "EGO",
+  "FAB", "DET", "JAB", "QSO", "LCH", "HVO", "TAJ", "TOR", "HIT", "AA", "AAA", "UHT", "PET", "ZUM",
+  "MAR", "RON", "GAS", "PIE", "BIO", "LIGHT", "PRO", "MAX", "UP", "XL", "XXL", "TIA", "TIO", "OREO",
+]);
+// Tamaños, unidades y números: "110G", "1L", "X12", "UN", "KG", "53", "1.5L", "3X110G"
+const SIZE_OR_UNIT = /^(?:\d+(?:[.,]\d+)?|(?:\d+X)?\d+(?:[.,]\d+)?(?:G|GR|GRS|KG|ML|L|LT|CC|OZ|M|UN|UND)|X\d+|UN|UND|UNID|KG|GR|ML|LT|CC|OZ)$/;
+
+/**
+ * Nombre limpio cuando la factura lo recorta y no hay completado conocido:
+ * 1) COMPLETIONS; 2) si la última palabra es un fragmento (1 a 3 letras que
+ * no son palabra conocida, tamaño ni unidad), se quita; 3) se quitan las
+ * palabras de enlace del final. Nunca deja el nombre vacío.
+ *   cleanTruncatedName("BARQUILLOS SU")    -> "BARQUILLOS"
+ *   cleanTruncatedName("SALSA PARA AD")    -> "SALSA PARA ADOBAR"   (COMPLETIONS)
+ *   cleanTruncatedName("GALLETAS DE CH")   -> "GALLETAS"
+ *   cleanTruncatedName("MANI CON PASA")    -> "MANÍ CON PASAS"
+ *   cleanTruncatedName("ARROZ DIANA 500G") -> "ARROZ DIANA 500G"   (sin cambio)
+ * Las palabras desconocidas de 4 letras o más NO se quitan: suelen ser marcas.
+ */
+export function cleanTruncatedName(name: string): string {
+  const completed = completeTruncated(name);
+  if (completed !== name.trim()) return completed;
+  const words = completed.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return completed;
+  const last = words[words.length - 1];
+  const isFragment =
+    /^[A-ZÑ]{1,3}$/.test(last) && !SHORT_OK.has(last) && !VOCAB.has(last) && !SIZE_OR_UNIT.test(last);
+  if (isFragment) words.pop();
+  while (words.length > 1 && CONNECTORS.has(words[words.length - 1])) words.pop();
+  const out = words.join(" ");
+  // Debe quedar al menos una palabra de 3 letras; si no, el texto original.
+  return /[A-ZÑ]{3,}/.test(out) ? out : completed;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Cantidad dentro del nombre                                          */
+/* ------------------------------------------------------------------ */
+
+const UNIT_WORD = /^(?:ML|L|LT|LTS|G|GR|GRS|KG|CC|OZ|M|CM|MM)$/;
+const PACK_WORD = /^(?:PACK|PK|SIXPACK|SIX|ROLLOS?|UNIDADES|PAQ)$/;
+// Al inicio: "3 CERVEZAS", "3CERVEZAS", "3 UN CERVEZA", "3UND CERVEZA", "3 X CERVEZA"
+const QTY_START = /^(\d{1,2})\s*(?:(?:UNID|UND|UN|U)\b\s*)?(?:[X*]\s+)?(?=[A-ZÑ])/;
+// Al final (o antes del tamaño): "CERVEZA AGUILA 3 UN", "X 3 UN", "PONY MALTA 6 UN 330ML"
+const QTY_END = /\s(?:X\s*)?(\d{1,2})\s*(?:UNIDS?|UNDS?|UN|U)\b/;
+
+/**
+ * Separa la cantidad del nombre. No toca tamaños ni empaques: "HUEVOS X12",
+ * "6 PACK", "3X110G", "500ML", "12 ROLLOS". Con cantidad > 1 la primera
+ * palabra pasa a singular si es un plural simple conocido.
+ *   extractQuantity("3 CERVEZAS")            -> { name: "CERVEZA", quantity: 3, fromName: true }
+ *   extractQuantity("3CERVEZAS")             -> { name: "CERVEZA", quantity: 3, fromName: true }
+ *   extractQuantity("CERVEZA AGUILA 3 UN")   -> { name: "CERVEZA AGUILA", quantity: 3, fromName: true }
+ *   extractQuantity("PONY MALTA 6 UN 330ML") -> { name: "PONY MALTA 330ML", quantity: 6, fromName: true }
+ *   extractQuantity("HUEVOS X12")            -> { name: "HUEVOS X12", quantity: 1, fromName: false }
+ *   extractQuantity("3X110G JABON PROTEX")   -> { name: "3X110G JABON PROTEX", quantity: 1, fromName: false }
+ */
+export function extractQuantity(line: string): { name: string; quantity: number; fromName: boolean } {
+  let name = line.trim();
+  let quantity = 1;
+  let fromName = false;
+
+  const s = QTY_START.exec(name);
+  if (s) {
+    const rest = name.slice(s[0].length).trim();
+    const first = rest.split(/\s+/)[0] ?? "";
+    // Lo que sigue debe ser una palabra de verdad (no "X110G", "ML", "PACK", "ROLLOS")
+    const isWord = /^[A-ZÑ]{3,}/.test(first) && !/^X\d/.test(first) && !UNIT_WORD.test(first) && !PACK_WORD.test(first);
+    if (isWord && Number(s[1]) >= 1) {
+      quantity = Number(s[1]);
+      name = rest;
+      fromName = true;
+    }
+  }
+  if (!fromName) {
+    const e = QTY_END.exec(name);
+    if (e && Number(e[1]) >= 1) {
+      quantity = Number(e[1]);
+      name = (name.slice(0, e.index) + name.slice(e.index + e[0].length)).replace(/\s{2,}/g, " ").trim();
+      fromName = true;
+    }
+  }
+  // Plural simple -> singular: CERVEZAS -> CERVEZA, LIMONES -> LIMON (solo si el
+  // singular es conocido y el plural no lo es: "PAPAS A LA FRANCESA" no cambia).
+  if (fromName && quantity > 1) {
+    const words = name.split(" ");
+    const w = words[0];
+    const candidates = [w.replace(/ES$/, ""), w.replace(/S$/, "")].filter((c) => c !== w && c.length >= 3);
+    const sing = candidates.find((c) => VOCAB.has(c));
+    if (sing && !VOCAB.has(w)) {
+      words[0] = sing;
+      name = words.join(" ");
+    }
+  }
+  return { name, quantity, fromName };
+}
+
+/** ¿unitario × cantidad ≈ total? (tolerancia de $1 o 2 %) */
+function quantityMatches(unit: number, qty: number, total: number): boolean {
+  return Math.abs(unit * qty - total) <= Math.max(1, total * 0.02);
+}
+
+// Línea de peso: "0,450 KG X 4.200" -> 0.45 kg; "450 GR X 9.800" -> 0.45 kg
+const WEIGHT_VALUE = /^\s*(\d+(?:[.,]\d+)?)\s*(KGS?|GRS?|G|LB)\b/;
+function weightKg(line: string): number | null {
+  const m = WEIGHT_VALUE.exec(line);
+  if (!m) return null;
+  const v = Number(m[1].replace(",", "."));
+  const kg = /^G/.test(m[2]) ? v / 1000 : /^LB/.test(m[2]) ? v * 0.4536 : v;
+  return kg > 0 && kg < 100 ? Math.round(kg * 1000) / 1000 : null;
 }
 
 /** Fecha de compra impresa en la factura, o null. */
@@ -367,7 +609,7 @@ export function detectPurchaseDate(lines: string[]): Date | null {
   return null;
 }
 
-export function parseReceipt(text: string): ParsedReceipt {
+export function parseReceipt(text: string, options: ParseOptions = {}): ParsedReceipt {
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.replace(/\t+/g, " ").replace(/\s{2,}/g, " ").trim())
@@ -378,11 +620,43 @@ export function parseReceipt(text: string): ParsedReceipt {
   // (D1 o Ara). "Código + nombre + precio" no cuenta: el Éxito mezcla líneas
   // con y sin código.
   const columnRows = upperLines.filter((l) => D1_ROW.test(l) || COLUMN_ROW.test(l)).length;
-  const columnar = upperLines.some((l) => D1_HEADER.test(l)) || columnRows >= 2;
+
+  // El código de barras manda: se cuentan las líneas con un EAN válido y el
+  // prefijo que comparten (7700304 = marca propia de D1).
+  const strictEans: string[] = [];
+  let nonCodePriced = 0;
+  for (const l of upperLines) {
+    const hit = findCode(l, {});
+    if (hit?.ean) strictEans.push(hit.ean);
+    else if (
+      PRICE_SUFFIX.test(l) &&
+      !TOTAL_LINE.test(l) &&
+      !SKIP.test(l) &&
+      !NOISE.test(l) &&
+      !WEIGHT_LINE.test(l) &&
+      !PRICE_ONLY.test(l)
+    )
+      nonCodePriced++;
+  }
+  const prefixCount = new Map<string, number>();
+  for (const e of strictEans)
+    if (e.length === 13) prefixCount.set(e.slice(0, 7), (prefixCount.get(e.slice(0, 7)) ?? 0) + 1);
+  const prefix = [...prefixCount.entries()].sort((a, b) => b[1] - a[1]).find(([, n]) => n >= 2)?.[0] ?? null;
+  const ctx = { known: options.knownEans, prefix };
+  // "Modo código": 2 o más códigos válidos y son la mayoría de las filas con
+  // precio. Así una factura del Éxito, que mezcla filas con y sin código, sigue
+  // aceptando las filas sin código.
+  const codeMode = strictEans.length >= 2 && strictEans.length > nonCodePriced;
+  const columnar = upperLines.some((l) => D1_HEADER.test(l)) || columnRows >= 2 || codeMode;
+  let expectedCount: number | null = null;
+  const diag: ReceiptDiagnostics = { codeLines: 0, validCodes: 0, rescued: 0, discarded: 0, lines: [] };
+  const note = (text: string, rule: string, ean?: string | null) =>
+    diag.lines.push({ text, rule, ...(ean ? { ean } : {}) });
 
   type Candidate = ReceiptItem & { priced: boolean; continuable: boolean };
   const found: Candidate[] = [];
   let pendingQty: number | null = null;
+  let pendingWeight: number | null = null; // kg de una línea de peso, para el producto siguiente
   let lastWasProduct = false; // la línea anterior fue un nombre (para unir nombres partidos)
   let total: number | null = null;
 
@@ -393,13 +667,31 @@ export function parseReceipt(text: string): ParsedReceipt {
     priced: boolean,
     corrected: boolean,
     continuable: boolean,
-    extra: { ean?: string | null; total?: number } = {},
+    extra: {
+      ean?: string | null;
+      total?: number;
+      unit?: "un" | "kg";
+      qtyMismatch?: boolean;
+      qtyUnknown?: boolean;
+      rescued?: boolean;
+    } = {},
   ): Candidate => {
-    const name = completeTruncated(rawName);
+    const name = cleanTruncatedName(rawName);
     const category = guessCategory(name);
+    const unit = extra.unit ?? "un";
     return {
       name: sentenceCase(name),
-      quantity: Math.min(Math.max(quantity, 1), 99),
+      sourceText: rawName.trim(),
+      unit,
+      // Por unidades: entero de 1 a 99. Por peso: kg con 3 decimales.
+      quantity:
+        unit === "kg"
+          ? Math.round(quantity * 1000) / 1000
+          : Math.min(Math.max(Math.round(quantity), 1), 99),
+      ...(extra.qtyMismatch ? { qtyMismatch: true } : {}),
+      ...(extra.qtyUnknown ? { qtyUnknown: true } : {}),
+      ...(extra.rescued ? { rescued: true } : {}),
+      nameSource: "Factura",
       category,
       days: estimateDays(name, category),
       raw: original,
@@ -429,23 +721,43 @@ export function parseReceipt(text: string): ParsedReceipt {
     const t = TOTAL_LINE.exec(upper);
     if (t && !/SUB\s*TOTAL/.test(upper)) {
       total = parseMoney(t[1]);
+      note(original, "TOTAL");
       lastWasProduct = false;
       continue;
+    }
+    // "NUM ART ENTREGADOS: 9": cuántas unidades debería tener la factura.
+    const na = /\bNUM\.?\s*ART\w*\s*(?:ENTREGADOS?)?\s*:?\s*(\d{1,3})\b/.exec(upper);
+    if (na) {
+      expectedCount = Number(na[1]);
+      note(original, "NUM ART ENTREGADOS");
+      lastWasProduct = false;
+      continue;
+    }
+    const codeHit = findCode(upper, ctx);
+    if (codeHit) {
+      diag.codeLines++;
+      if (codeHit.ean && !codeHit.rescued) diag.validCodes++;
+      if (codeHit.rescued) diag.rescued++;
     }
 
     // 1) Fila D1 completa
     const d1 = D1_ROW.exec(upper);
     if (d1) {
       const desc = cleanDesc(d1[5]);
-      const code = fixEan(d1[4]);
+      const code = resolveCode(d1[4], ctx);
       if (looksLikeName(desc)) {
         const qty = Number(d1[2]) || 1;
+        const lineTotal = parseMoney(d1[6]);
         found.push(
           make(desc, qty, original, true, code.corrected, false, {
             ean: code.ean,
-            total: parseMoney(d1[6]),
+            total: lineTotal,
+            // Cantidad de la columna; si unitario × cantidad no da el total, se marca.
+            qtyMismatch: !quantityMatches(parseMoney(d1[3]), qty, lineTotal),
+            rescued: code.rescued,
           }),
         );
+        note(original, "D1 completa", code.ean);
       }
       pendingQty = null;
       lastWasProduct = false;
@@ -477,11 +789,15 @@ export function parseReceipt(text: string): ParsedReceipt {
       const code = codeTok.length >= 8 ? fixEan(codeTok) : { ean: null, corrected: false };
       const prices = upper.match(new RegExp(MONEY, "g")) ?? [];
       const lineTotal = prices.length >= 2 ? parseMoney(prices[prices.length - 1]) : undefined;
+      const unitPrice = prices.length >= 2 ? parseMoney(prices[prices.length - 2]) : undefined;
+      const qty = Number(col[2]);
       if (looksLikeName(name)) {
         found.push(
-          make(name, Number(col[2]), original, true, fixOcrWords(upper).corrected, false, {
+          make(name, qty, original, true, fixOcrWords(upper).corrected, false, {
             ean: code.ean,
             total: lineTotal,
+            qtyMismatch:
+              unitPrice !== undefined && lineTotal !== undefined && !quantityMatches(unitPrice, qty, lineTotal),
           }),
         );
       }
@@ -489,22 +805,75 @@ export function parseReceipt(text: string): ParsedReceipt {
       continue;
     }
 
-    // 3) Código + descripción + valor (también la 2.ª mitad de una fila D1 partida)
-    const cdt = CODE_DESC_TOTAL.exec(upper);
-    if (cdt) {
-      const desc = cleanDesc(fixOcrWords(cdt[2]).line);
-      const code = fixEan(cdt[1]);
-      if (looksLikeName(desc)) {
-        found.push(
-          make(desc, pendingQty ?? 1, original, true, code.corrected, false, {
-            ean: code.ean,
-            total: parseMoney(cdt[3]),
-          }),
-        );
+    // 3) El código de barras como ancla: toda línea con un EAN válido es un
+    //    producto, aunque no tenga cantidad ni precio (foto recortada):
+    //    "7700304448241 TORTILLA FAJI". La descripción va después del código
+    //    (o en la línea siguiente si el OCR la partió). Cantidad y precio son
+    //    opcionales; sin ellos: cantidad 1 y "revisar cantidad".
+    if (codeHit?.ean) {
+      const before = upper.slice(0, codeHit.start).trim();
+      let rest = " " + upper.slice(codeHit.end).trim();
+      const prices: number[] = [];
+      while (PRICE_SUFFIX.test(rest)) {
+        const m = PRICE_SUFFIX.exec(rest)!;
+        prices.push(parseMoney(m[0].replace(/\s+[A-Z0-9]\s*$/, "")));
+        rest = rest.replace(PRICE_SUFFIX, "");
       }
+      if (prices.length) rest = rest.replace(TAX_TAIL, "");
+      let desc = cleanDesc(fixOcrWords(rest.trim()).line);
+      let raw = original;
+      // Descripción en la línea siguiente (sin código, con letras)
+      if (!looksLikeName(desc) && li + 1 < lines.length) {
+        const next = upperLines[li + 1];
+        const nd = cleanDesc(fixOcrWords(next.replace(PRICE_SUFFIX, "")).line);
+        if (
+          !findCode(next, ctx) &&
+          !SKIP.test(next) &&
+          !NOISE.test(next) &&
+          !TOTAL_LINE.test(next) &&
+          looksLikeName(nd)
+        ) {
+          desc = nd;
+          raw = original + " / " + lines[li + 1];
+          li++;
+        }
+      }
+      // Cantidad: columna antes del código ("1 2 UN 3.090 7700…"), línea anterior o dentro del nombre
+      let qty: number | null = pendingQty;
+      const pre = new RegExp(String.raw`^\s*\d{1,3}\s+(\d{1,3})\s*${UNIT}\b`).exec(before);
+      if (pre) qty = Number(pre[1]);
+      if (qty === null && desc) {
+        const q = extractQuantity(desc);
+        if (q.fromName) {
+          qty = q.quantity;
+          desc = q.name;
+        }
+      }
+      const qtyUnknown = qty === null && prices.length === 0;
+      found.push(
+        make(
+          desc && looksLikeName(desc) ? desc : `PRODUCTO ${codeHit.ean}`,
+          qty ?? 1,
+          raw,
+          true,
+          codeHit.corrected,
+          false,
+          { ean: codeHit.ean, total: prices[0], qtyUnknown, rescued: codeHit.rescued },
+        ),
+      );
+      note(raw, codeHit.rescued ? "código rescatado" : "código", codeHit.ean);
       pendingQty = null;
       lastWasProduct = false;
       continue;
+    }
+    if (codeHit && !codeHit.ean) {
+      diag.discarded++;
+      // Con varios códigos válidos en la factura, una fila de código inválido no se inventa.
+      if (codeMode) {
+        note(original, "código inválido (descartada)");
+        lastWasProduct = false;
+        continue;
+      }
     }
 
     // Precio suelto: pertenece al producto de la línea anterior.
@@ -518,13 +887,32 @@ export function parseReceipt(text: string): ParsedReceipt {
       lastWasProduct = false;
       continue;
     }
-    if (WEIGHT_LINE.test(upper) || SKIP.test(upper) || NOISE.test(upper)) {
+    // Peso: "0,450 KG X 4.200 1.890". Va al producto de la línea anterior si
+    // aún no tenía precio; si no, al siguiente ("0,450 KG X 4.200" + "BANANO").
+    if (WEIGHT_LINE.test(upper)) {
+      const kg = weightKg(upper);
+      const prev = found.at(-1);
+      if (kg && prev && lastWasProduct && !prev.priced && prev.unit !== "kg") {
+        prev.quantity = kg;
+        prev.unit = "kg";
+        const m = PRICE_SUFFIX.exec(upper);
+        if (m) {
+          prev.priced = true;
+          prev.total = parseMoney(m[0].replace(/\s+[A-Z]\s*$/, ""));
+        }
+      } else if (kg) pendingWeight = kg;
+      lastWasProduct = false;
+      continue;
+    }
+    if (SKIP.test(upper) || NOISE.test(upper)) {
+      note(original, "ruido (pie, pagos, dirección)");
       lastWasProduct = false;
       continue;
     }
     // En una factura de columnas, una línea sin código ni columnas no es un producto
     // ("TARJ CRE/DEB", "ARO", la dirección…).
     if (columnar) {
+      note(original, codeMode ? "sin código (factura con códigos)" : "sin columnas (factura de columnas)");
       lastWasProduct = false;
       continue;
     }
@@ -536,24 +924,34 @@ export function parseReceipt(text: string): ParsedReceipt {
     line = line.replace(CODE_PREFIX, "");
 
     let priced = false;
-    let lineTotal: number | undefined;
+    const prices: number[] = []; // de derecha a izquierda: [total, unitario?]
     while (PRICE_SUFFIX.test(line)) {
       const m = PRICE_SUFFIX.exec(line)!;
-      if (lineTotal === undefined) lineTotal = parseMoney(m[0].replace(/\s+[A-Z]\s*$/, ""));
+      prices.push(parseMoney(m[0].replace(/\s+[A-Z]\s*$/, "")));
       line = line.replace(PRICE_SUFFIX, "");
       priced = true;
     }
+    const lineTotal: number | undefined = prices[0];
     if (priced || hadCode) line = line.replace(TAX_TAIL, "");
 
+    // Cantidad: "2 X LECHE", "3 CERVEZAS", "3CERVEZAS", "CERVEZA AGUILA 3 UN"…
+    line = cleanDesc(line);
     let quantity = pendingQty ?? 1;
     pendingQty = null;
-    const pre = QTY_PREFIX.exec(line);
-    if (pre) {
-      quantity = Number(pre[1]);
-      line = line.replace(QTY_PREFIX, "");
+    const q2 = extractQuantity(line);
+    const pre = q2.fromName;
+    if (q2.fromName) {
+      quantity = q2.quantity;
+      line = q2.name;
     }
-
-    line = cleanDesc(line);
+    // Si hay unitario y total, la cantidad debe cuadrar; si no, 1 y baja confianza.
+    let qtyMismatch = false;
+    if (prices.length >= 2 && quantity > 1 && !quantityMatches(prices[1], quantity, prices[0])) {
+      quantity = 1;
+      qtyMismatch = true;
+    }
+    const weight = pendingWeight;
+    pendingWeight = null;
 
     // Nombre partido en dos líneas: "SHAMPOO HEAD" + "SHOULDERS 375ML 18.900" o
     // "JABON PROTEX AVENA" + "3X110G 9.900". Si la anterior era un nombre sin
@@ -572,7 +970,7 @@ export function parseReceipt(text: string): ParsedReceipt {
       line.length > 0
     ) {
       const joined = prev.raw.trim() + " / " + original.trim();
-      const name = stripAccents(prev.name.toUpperCase()) + " " + line;
+      const name = (prev.sourceText ?? stripAccents(prev.name.toUpperCase())) + " " + line;
       found[found.length - 1] = make(
         name,
         prev.quantity,
@@ -595,8 +993,10 @@ export function parseReceipt(text: string): ParsedReceipt {
     const isStore = CHAINS.some((c) => chainRe(c).test(line));
 
     found.push(
-      make(line, quantity, original, priced || hadCode, fixed.corrected, !isStore, {
+      make(line, weight ?? quantity, original, priced || hadCode, fixed.corrected, !isStore, {
         total: lineTotal,
+        qtyMismatch,
+        ...(weight ? { unit: "kg" as const } : {}),
       }),
     );
     lastWasProduct = !(priced || hadCode);
@@ -631,11 +1031,16 @@ export function parseReceipt(text: string): ParsedReceipt {
     lowConfidence:
       it.category === "Otros" ||
       letters(stripAccents(it.name.toUpperCase())) < 5 ||
-      (!!it.corrected && totalMatches !== true),
+      (!!it.corrected && totalMatches !== true) ||
+      !!it.qtyMismatch,
   }));
 
+  // Sin encabezado en la foto: si los códigos son de marca propia de D1 (7700304…), es D1.
+  const store =
+    detectStore(lines) ?? (strictEans.filter((e) => e.startsWith("7700304")).length >= 2 ? "D1" : null);
+
   return {
-    store: detectStore(lines),
+    store,
     items,
     text,
     total,
@@ -643,7 +1048,69 @@ export function parseReceipt(text: string): ParsedReceipt {
     totalMatches,
     purchaseDate: detectPurchaseDate(lines),
     columnar,
+    expectedCount,
+    diagnostics: diag,
   };
+}
+
+/** Clave para unir una misma fila leída en dos fotos: EAN o descripción normalizada. */
+function itemKey(it: ReceiptItem): string {
+  return it.ean ?? normalizeName(it.sourceText ?? it.name).replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Une dos lecturas de la misma factura (escaneo por partes). Los productos
+ * repetidos se unen por EAN (o por descripción) SIN sumar cantidades: se
+ * queda la lectura con más datos (con precio o cantidad conocida).
+ *   mergeReceipts(filas 1-5, filas 4-8) -> 8 productos
+ */
+export function mergeReceipts(a: ParsedReceipt, b: ParsedReceipt): ParsedReceipt {
+  const byKey = new Map<string, ReceiptItem>();
+  const score = (it: ReceiptItem) =>
+    (it.total ? 2 : 0) + (it.qtyUnknown ? 0 : 1) + (it.lowConfidence ? 0 : 1);
+  for (const it of [...a.items, ...b.items]) {
+    const k = itemKey(it);
+    const prev = byKey.get(k);
+    if (!prev || score(it) > score(prev)) byKey.set(k, it);
+  }
+  const items = [...byKey.values()];
+  const total = a.total ?? b.total;
+  const sum = items.reduce((acc, it) => acc + (it.total ?? 0), 0);
+  const allPriced = items.length > 0 && items.every((it) => it.total !== undefined);
+  return {
+    store: a.store ?? b.store,
+    items,
+    text: [a.text, b.text].filter(Boolean).join("\n——— otra parte ———\n"),
+    total,
+    sum,
+    totalMatches: total !== null && allPriced ? Math.abs(sum - total) <= 1 : null,
+    purchaseDate: a.purchaseDate ?? b.purchaseDate,
+    columnar: a.columnar || b.columnar,
+    expectedCount: a.expectedCount ?? b.expectedCount,
+    diagnostics: {
+      codeLines: a.diagnostics.codeLines + b.diagnostics.codeLines,
+      validCodes: a.diagnostics.validCodes + b.diagnostics.validCodes,
+      rescued: a.diagnostics.rescued + b.diagnostics.rescued,
+      discarded: a.diagnostics.discarded + b.diagnostics.discarded,
+      lines: [...a.diagnostics.lines, ...b.diagnostics.lines],
+    },
+  };
+}
+
+/**
+ * ¿Faltan productos según la factura? Compara las unidades detectadas con
+ * "NUM ART ENTREGADOS" y la suma con el TOTAL. null si no falta nada o no hay
+ * con qué comparar.
+ *   missingInfo(factura con 6 unidades y "NUM ART ENTREGADOS: 9") -> { missingUnits: 3, missingValue: 0 }
+ */
+export function missingInfo(r: ParsedReceipt): { missingUnits: number; missingValue: number } | null {
+  if (r.expectedCount === null && r.total === null) return null;
+  const units = r.items.reduce((acc, it) => acc + (it.unit === "kg" ? 1 : it.quantity), 0);
+  const missingUnits = r.expectedCount !== null ? Math.max(0, r.expectedCount - units) : 0;
+  // La suma solo se compara si todos los productos tienen valor (si no, no es falta, es foto recortada).
+  const allPriced = r.items.length > 0 && r.items.every((it) => it.total !== undefined);
+  const missingValue = r.total !== null && allPriced && r.sum < r.total - 1 ? r.total - r.sum : 0;
+  return missingUnits > 0 || missingValue > 0 ? { missingUnits, missingValue } : null;
 }
 
 /* ------------------------------------------------------------------ */

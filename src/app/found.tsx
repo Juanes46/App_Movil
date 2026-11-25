@@ -66,7 +66,7 @@ export default function FoundScreen() {
   const next = (pathname: "/scanner" | "/product") =>
     router.push({
       pathname,
-      params: p ? { name: fullName, category: p.categoria } : {},
+      params: p ? { name: fullName, category: p.categoria, ean: p.ean } : {},
     });
 
   return (

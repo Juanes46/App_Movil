@@ -21,6 +21,7 @@ import {
   useProducts,
   useStoreStatus,
 } from "@/services/productStore";
+import { saveLearned } from "@/services/learnedNames";
 import { formatDate, parseDate } from "@/utils/expiration";
 import { suggestLocation } from "@/utils/location";
 export default function ProductScreen() {
@@ -35,6 +36,8 @@ export default function ProductScreen() {
     ocrConfidence?: string;
     quantity?: string;
     location?: string;
+    /** Código de barras (desde Producto encontrado o el escáner). */
+    ean?: string;
   }>();
   const products = useProducts();
   const { ready } = useStoreStatus();
@@ -95,11 +98,26 @@ export default function ProductScreen() {
         quantity,
         location,
         estimated,
+        ...(params.ean ? { ean: params.ean } : {}),
       };
       if (params.id) {
         if (!existing) throw new Error("Producto no encontrado");
         await updateProduct(existing.id, input);
       } else await addProduct(input);
+      // Si el producto tiene código de barras y el usuario corrigió el nombre, la
+      // categoría o la ubicación, se recuerda para la próxima factura o escaneo.
+      const ean = existing?.ean ?? params.ean;
+      const before = existing
+        ? { name: existing.name, category: existing.category, location: existing.location }
+        : { name: params.name, category: params.category, location };
+      if (
+        ean &&
+        (input.name !== before.name || category !== before.category || location !== before.location)
+      ) {
+        await saveLearned([{ key: ean, nombre: input.name, categoria: category, ubicacion: location }]).catch(
+          () => {},
+        );
+      }
       router.replace("/pantry");
     } catch {
       setError("No se pudo guardar el producto. Intenta nuevamente.");
@@ -140,6 +158,7 @@ export default function ProductScreen() {
                   id: params.id,
                   quantity: String(quantity),
                   location,
+                  ...(params.ean ? { ean: params.ean } : {}),
                 },
               })
             }

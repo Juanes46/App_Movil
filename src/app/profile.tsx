@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { useFocusEffect } from "expo-router";
 import { Linking, Pressable, Switch, View } from "react-native";
 import { Button } from "@/components/Button";
 import { Logo } from "@/components/Logo";
 import { Note, Screen, Section, Txt, ui } from "@/components/PantryUI";
 import { COLORS as C } from "@/constants/pantry";
 import { SOON_DAYS } from "@/utils/expiration";
+import { clearLearned, countLearned } from "@/services/learnedNames";
 
 /** Fila de ajuste del Figma: título, detalle, valor y chevron o interruptor. */
 function SettingRow({
@@ -52,6 +54,25 @@ function SettingRow({
 
 export default function ProfileScreen() {
   const [alerts, setAlerts] = useState(true);
+  // Nombres recordados: correcciones de facturas que se reusan por código de barras.
+  const [learned, setLearned] = useState<number | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearMsg, setClearMsg] = useState("");
+  useFocusEffect(
+    useCallback(() => {
+      countLearned().then(setLearned).catch(() => setLearned(null));
+    }, []),
+  );
+  async function clearNames() {
+    try {
+      await clearLearned();
+      setLearned(0);
+      setClearMsg("Listo: se borraron los nombres recordados.");
+    } catch {
+      setClearMsg("No se pudieron borrar. Intenta de nuevo.");
+    }
+    setConfirmClear(false);
+  }
   return (
     <Screen title="Perfil y configuración" active="Perfil">
       <View style={[ui.row, { backgroundColor: C.surfaceSoft, padding: 14, borderRadius: 14 }]}>
@@ -98,6 +119,36 @@ export default function ProfileScreen() {
           disabled
         />
       </View>
+
+      <Section title="Facturas" />
+      <SettingRow
+        title="Nombres recordados"
+        detail="Correcciones que se usan al escanear otra factura con el mismo producto"
+        value={learned === null ? "—" : String(learned)}
+      />
+      {confirmClear ? (
+        <View style={[ui.card, { backgroundColor: C.dangerSoft, borderColor: C.danger }]}>
+          <Txt style={{ fontWeight: "600" }}>
+            ¿Borrar {learned ?? 0} nombres recordados? No se puede deshacer.
+          </Txt>
+          <Txt style={{ fontSize: 12, color: C.muted }}>
+            Los productos de tu despensa no se borran; solo se olvidan las correcciones.
+          </Txt>
+          <Button title="Sí, borrar" variant="danger" onPress={clearNames} />
+          <Button title="Cancelar" variant="secondary" onPress={() => setConfirmClear(false)} />
+        </View>
+      ) : (
+        <Button
+          title="Borrar nombres recordados"
+          variant="secondary"
+          disabled={!learned}
+          onPress={() => {
+            setClearMsg("");
+            setConfirmClear(true);
+          }}
+        />
+      )}
+      {!!clearMsg && <Txt style={ui.muted}>{clearMsg}</Txt>}
 
       <Note>Este prototipo funciona sin iniciar sesión. Las notificaciones push aún no están habilitadas.</Note>
       <Button title="Cuenta local · sin sesión" variant="secondary" disabled onPress={() => {}} />

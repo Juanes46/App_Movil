@@ -62,7 +62,7 @@ assert.equal(r.store, "Exito");
 const names = r.items.map((i) => i.name);
 assert.deepEqual(names, [
   "Leche entera alqueria 1L",
-  "Huevos aa x12",
+  "Huevos aa X12",
   "Arroz diana 1000G",
   "Atun en agua van camps",
   "Tomate chonto",
@@ -320,7 +320,7 @@ printItems("D1", d1b);
 assert.deepEqual(d1b.items.map((i) => [i.name, i.quantity, i.category]), [
   ["Jabon protex avena 3X110G", 1, "Cuidado personal"],
   ["Det ariel 1KG", 2, "Aseo del hogar"],
-  ["Gaseos colombiana 1.5L", 1, "Bebidas"],
+  ["Gaseosa colombiana 1.5L", 1, "Bebidas"],
 ]);
 
 const ara2 = parseReceipt(`TIENDAS ARA JERONIMO MARTINS COLOMBIA S.A.S.
@@ -484,6 +484,74 @@ assert.deepEqual(load("utils/receipt").fixEan("7700304448841"), { ean: null, cor
 assert.equal(load("utils/receipt").fixEan("77OO3O4448241").ean, "7700304448241");
 assert.equal(load("utils/receipt").parseMoney("$ 39.670"), 39670);
 
+// ---- Nombres recortados: completado o limpieza del fragmento final ----
+const { cleanTruncatedName, extractQuantity } = load("utils/receipt");
+console.log("Nombres recortados (factura -> nombre limpio):");
+const truncCases = [
+  ["BARQUILLOS SU", "Barquillos"],
+  ["SALSA PARA AD", "Salsa para adobar"],
+  ["GALLETAS DE CH", "Galletas"],
+  ["MANI CON PASA", "Maní con pasas"],
+  ["LECHE ENTERA", "Leche entera"],
+  ["ARROZ DIANA 500G", "Arroz diana 500G"],
+  ["CHOCOLATINA JUMBO", "Chocolatina jumbo"], // marca desconocida de 5 letras: no se quita
+  ["XQ", "Xq"], // nunca vacío
+];
+for (const [rawName, want] of truncCases) {
+  const got = parseReceipt(`N° CAN UM VALOR U CODIGO DESCRIPCION VALOR ID\n1 1 UN 1.000 7700304448241 ${rawName} 1.000 A\n2 1 UN 1.000 7700304930951 ATUN EN AGUA 1.000 A`).items[0];
+  const ok = got && got.sourceText === rawName;
+  show(rawName, ok ? `${got.name} · leído "${got.sourceText}"` : `${cleanTruncatedName(rawName)} (fila descartada: muy corta)`);
+  if (rawName !== "XQ") assert.equal(got.name, want, rawName);
+}
+assert.equal(cleanTruncatedName("XQ"), "XQ");
+assert.equal(cleanTruncatedName("SALSA PARA ZZ"), "SALSA"); // sin completado: se quita "ZZ" y "PARA"
+
+// ---- Cantidad separada del nombre ----
+console.log("Cantidad (línea -> nombre · cantidad):");
+const qtyCases = [
+  ["3 CERVEZAS 9.000", "Cerveza", 3],
+  ["3CERVEZAS 9.000", "Cerveza", 3],
+  ["CERVEZA AGUILA 3 UN 9.000", "Cerveza aguila", 3],
+  ["CERVEZA AGUILA X 3 UN 9.000", "Cerveza aguila", 3],
+  ["3 UN CERVEZA AGUILA 9.000", "Cerveza aguila", 3],
+  ["3UND CERVEZA 9.000", "Cerveza", 3],
+  ["3 X CERVEZA 9.000", "Cerveza", 3],
+  ["HUEVOS X12 14.900", "Huevos X12", 1],
+  ["3X110G JABON PROTEX 12.900", "3X110G jabon protex", 1],
+  ["PONY MALTA 6 UN 330ML 12.000", "Pony malta 330ML", 6],
+  ["6 PACK CERVEZA AGUILA 18.000", "6 pack cerveza aguila", 1],
+  ["PAPEL HIGIENICO 12 ROLLOS 21.500", "Papel higienico 12 rollos", 1],
+  ["2 PAPAS A LA FRANCESA 9.500", "Papas a la francesa", 2], // no pasa a singular
+];
+for (const [line, wantName, wantQty] of qtyCases) {
+  const it = parseReceipt(line).items[0];
+  show(line, `${it.name} · ×${it.quantity} ${it.unit}${it.lowConfidence ? " · ⚠" : ""}`);
+  assert.equal(it.name, wantName, line);
+  assert.equal(it.quantity, wantQty, line);
+}
+assert.deepEqual(extractQuantity("3 CERVEZAS"), { name: "CERVEZA", quantity: 3, fromName: true });
+// Unitario × cantidad no da el total: cantidad 1 y baja confianza
+const bad = parseReceipt("3 CERVEZAS 3.000 5.000").items[0];
+show("3 CERVEZAS 3.000 5.000", `${bad.name} · ×${bad.quantity} · ${bad.lowConfidence ? "⚠ revisar" : "ok"}`);
+assert.equal(bad.quantity, 1);
+assert.equal(bad.lowConfidence, true);
+const good = parseReceipt("3 CERVEZAS 3.000 9.000").items[0];
+assert.equal(good.quantity, 3);
+assert.equal(good.lowConfidence, false);
+// Columna D1 que no cuadra (2 × 3.090 ≠ 9.999): conserva la columna y marca
+const d1bad = parseReceipt(`N° CAN UM VALOR U CODIGO DESCRIPCION VALOR ID
+1 2 UN 3.090 7700304687862 LECHE ENTERA 9.999 6
+2 1 UN 2.990 7700304598281 PAN TAJADO BL 2.990 5`).items[0];
+assert.equal(d1bad.quantity, 2);
+assert.equal(d1bad.lowConfidence, true);
+// Por peso: "0,450 KG X 4.200" -> 0,45 kg del producto siguiente
+const peso = parseReceipt(`0,450 KG X 4.200
+BANANO 1.890
+TOMATE CHONTO 2.340`);
+show("0,450 KG X 4.200 + BANANO", `${peso.items[0].name} · ${peso.items[0].quantity} ${peso.items[0].unit}`);
+assert.deepEqual([peso.items[0].name, peso.items[0].quantity, peso.items[0].unit], ["Banano", 0.45, "kg"]);
+assert.equal(peso.items[1].unit, "un");
+
 // ---- Nombres completos por código de barras (búsqueda simulada, sin red) ----
 const { enrichReceipt } = load("services/receiptLookup");
 (async () => {
@@ -541,6 +609,158 @@ const { enrichReceipt } = load("services/receiptLookup");
       ["Panadería", "Alacena", "🍞"],
     ],
   );
+
+  // ---- Nombres aprendidos: tienen prioridad y no gastan consultas ----
+  const { learnedKey } = load("services/receiptLookup");
+  const barq = parseReceipt(`D1 SAS NIT 900.276.962-1
+N° CAN UM VALOR U CODIGO DESCRIPCION VALOR ID
+1 1 UN 3.500 7700304111114 BARQUILLOS SU 3.500 A
+2 1 UN 2.000 7700304930951 ATUN EN AGUA 2.000 5
+3 1 UN 1.200 77XX304111114 GALLETAS DE CH 1.200 A`);
+  const learnedMap = new Map([
+    ["7700304111114", { nombre: "Barquillos de vainilla", categoria: "Snacks y dulces", ubicacion: "Alacena" }],
+    [learnedKey({ sourceText: "GALLETAS DE CH" }, "D1"), { nombre: "Galletas de chocolate", categoria: "Snacks y dulces", ubicacion: null }],
+  ]);
+  const called = [];
+  const mustNotCallForLearned = async (ean) => {
+    called.push(ean);
+    if (ean === "7700304111114") throw new Error("¡No debía consultar la API para un EAN aprendido!");
+    throw new Error("No encontramos este producto");
+  };
+  const lrn = await enrichReceipt(barq, mustNotCallForLearned, { learned: learnedMap });
+  console.log("Con nombres aprendidos:");
+  for (const i of lrn.receipt.items)
+    show(i.sourceText, `${i.name}${i.fromLearned ? " · Nombre recordado" : ""} · clave ${learnedKey(i, barq.store)}`);
+  assert.equal(barq.items[0].name, "Barquillos"); // sin aprender: nombre limpio
+  assert.equal(lrn.receipt.items[0].name, "Barquillos de vainilla");
+  assert.equal(lrn.receipt.items[0].fromLearned, true);
+  assert.equal(lrn.receipt.items[0].learnedLocation, "Alacena");
+  assert.equal(lrn.receipt.items[2].name, "Galletas de chocolate"); // sin EAN válido: por "D1|GALLETAS DE CH"
+  assert.equal(learnedKey(barq.items[2], barq.store), "D1|GALLETAS DE CH");
+  assert.deepEqual(called, ["7700304930951"]); // solo el atún fue a la API
+  assert.equal(lrn.remembered, 2);
+
+  // ================= Factura D1 RECORTADA: el código de barras es el ancla =================
+  // SIMULADA (falta el texto real de la cámara): solo "CÓDIGO DESCRIPCIÓN" por línea,
+  // sin cantidad ni valores, sin encabezado, con ruido de dirección, pago y total.
+  const { identifyReceipt } = load("services/receiptIdentify");
+  const { EAN_CONOCIDOS } = load("data/eanConocidos");
+  const { mergeReceipts, missingInfo, rescueEan, fixEan } = load("utils/receipt");
+  const RECORTE = `DG 72 2 15 TUNJA
+7700304448241 TORTILLA FAJI
+7700304930951 ATUN EN AGUA
+77OO304537648 MORA CONGELAD
+7700304087143 PAPAS A LA FR
+7700304587230 ACEITE VEGETA
+7700304035076 SALSA PARA AD
+7700304687862 LECHE ENTERA
+7700304598281 PAN TAJADO BL
+TOTAL $ 39.670
+TARJ CRE/DEB $ 39.670
+TARJ: 9999 Recibo: 016301 RRN: 193968
+Apro: 522389`;
+  const rec = parseReceipt(RECORTE, { knownEans: new Set(Object.keys(EAN_CONOCIDOS)) });
+  const recId = (await identifyReceipt(rec, { known: EAN_CONOCIDOS })).receipt;
+  console.log(`D1 recortada (simulada): tienda ${rec.store} · ${rec.items.length} productos · diagnóstico ${JSON.stringify({ codeLines: rec.diagnostics.codeLines, validos: rec.diagnostics.validCodes, rescatados: rec.diagnostics.rescued, descartados: rec.diagnostics.discarded })}`);
+  for (const i of recId.items)
+    show(i.sourceText, `${i.name} · ${i.category} · ${suggestLocation(i.name, i.category)} · ${emojiForProduct(i.name, i.category)} · fuente ${i.nameSource} · ×${i.quantity}${i.qtyUnknown ? " (revisar cantidad)" : ""}`);
+  assert.equal(rec.store, "D1"); // por el prefijo 7700304, sin encabezado
+  assert.deepEqual(
+    recId.items.map((i) => [i.ean, i.name, i.category, i.quantity, !!i.qtyUnknown, i.nameSource]),
+    [
+      ["7700304448241", "Tortillas para fajitas", "Panadería", 1, true, "Conocido"],
+      ["7700304930951", "Atún en agua", "Enlatados", 1, true, "Conocido"],
+      ["7700304537648", "Mora congelada", "Congelados", 1, true, "Conocido"], // 77OO… corregido
+      ["7700304087143", "Papas a la francesa", "Congelados", 1, true, "Conocido"],
+      ["7700304587230", "Aceite vegetal", "Condimentos y aceites", 1, true, "Conocido"],
+      ["7700304035076", "Salsa para adobar", "Condimentos y aceites", 1, true, "Conocido"],
+      ["7700304687862", "Leche entera", "Lácteos", 1, true, "Conocido"],
+      ["7700304598281", "Pan tajado blanco", "Panadería", 1, true, "Conocido"],
+    ],
+  );
+  assert.ok(recId.items.every((i) => !NOISY_NAMES.test(i.name) && !/total|tarj|tunja/i.test(i.raw)));
+  assert.equal(rec.items[2].corrected, true); // O -> 0
+  // Sin diccionario: queda el nombre limpio de la factura
+  assert.equal(rec.items[0].name, "Tortilla fajita");
+  assert.equal(rec.items[0].nameSource, "Factura");
+
+  // La descripción en la línea siguiente (el OCR partió la fila)
+  const partida = parseReceipt(`7700304448241\nTORTILLA FAJI\n7700304930951 ATUN EN AGUA`);
+  assert.deepEqual(partida.items.map((i) => i.name), ["Tortilla fajita", "Atun en agua"]);
+
+  // Dígito de control inválido: no es un producto por código (y no se inventa)
+  const invalido = parseReceipt(`7700304448241 TORTILLA FAJI\n7700304930951 ATUN EN AGUA\n7700304999999 PRODUCTO RARO`);
+  assert.equal(invalido.items.length, 2);
+  assert.equal(invalido.diagnostics.discarded, 1);
+  assert.equal(fixEan("7700304448242").ean, null);
+
+  // Rescate: un 8 leído como 3 (7700304448241 -> 7700304443241)
+  const known = new Set(Object.keys(EAN_CONOCIDOS));
+  console.log(`Rescate: 7700304443241 -> ${rescueEan("7700304443241", { known })} (con diccionario) · ${rescueEan("7700304443241", {})} (sin diccionario ni prefijo)`);
+  assert.equal(rescueEan("7700304443241", { known }), "7700304448241");
+  assert.equal(rescueEan("7700304443241", {}), null);
+  const rescatada = parseReceipt(`7700304443241 TORTILLA FAJI\n7700304930951 ATUN EN AGUA\n7700304537648 MORA CONGELAD`, { knownEans: known });
+  assert.equal(rescatada.items[0].ean, "7700304448241");
+  assert.equal(rescatada.items[0].rescued, true);
+  assert.equal(rescatada.diagnostics.rescued, 1);
+  // Sin diccionario, con prefijo compartido: solo si es la ÚNICA variante válida
+  const soloPrefijo = rescueEan("7700304443241", { prefix: "7700304" });
+  console.log(`Rescate solo por prefijo 7700304: ${soloPrefijo ?? "no (hay más de una variante o ninguna)"}`);
+
+  // ---- Escaneo por partes: filas 1-5 + filas 4-8 = 8 productos, sin duplicar ----
+  const lines = RECORTE.split("\n").filter((l) => /^77/.test(l));
+  const parte1 = parseReceipt(lines.slice(0, 5).join("\n"));
+  const parte2 = parseReceipt(lines.slice(3, 8).join("\n") + "\nNUM ART ENTREGADOS: 9");
+  const unida = mergeReceipts(parte1, parte2);
+  console.log(`Por partes: ${parte1.items.length} + ${parte2.items.length} -> ${unida.items.length} productos · faltan ${JSON.stringify(missingInfo(unida))}`);
+  assert.equal(unida.items.length, 8);
+  assert.equal(unida.expectedCount, 9);
+  assert.equal(unida.items.find((i) => i.ean === "7700304087143").quantity, 1); // repetido sin sumar
+  // 8 unidades de 9 (la leche son 2 y la foto recortada no lo dice): falta 1
+  assert.deepEqual(missingInfo(unida), { missingUnits: 1, missingValue: 0 });
+
+  // ---- Aviso de faltantes: 6 de 9 artículos ----
+  const seis = parseReceipt(lines.slice(0, 6).join("\n") + "\nNUM ART ENTREGADOS: 9");
+  console.log(`6 de 9: ${JSON.stringify(missingInfo(seis))}`);
+  assert.deepEqual(missingInfo(seis), { missingUnits: 3, missingValue: 0 });
+  // Sin "NUM ART" ni TOTAL: no se muestra nada
+  assert.equal(missingInfo(parte1), null);
+  // La factura completa cuadra: nada falta
+  assert.equal(missingInfo(d1t), null);
+
+  // ---- Cadena de identificación con búsquedas simuladas ----
+  const llamadas = [];
+  const remotes = [
+    { name: "Open Food Facts", lookup: async (e) => { llamadas.push("OFF " + e); return e === "7700304930951" ? { nombre: "Atún En Agua", marca: "Carlo Forte", categoria: "Enlatados" } : null; } },
+    { name: "Los Precios", lookup: async (e) => { llamadas.push("LP " + e); throw new Error("Sin conexión a internet"); } },
+    { name: "UPCitemdb", lookup: async (e) => { llamadas.push("UPC " + e); throw new Error("EXCEED_LIMIT"); } }, // límite: se salta
+  ];
+  const cadena = parseReceipt(`7700304448241 TORTILLA FAJI\n7700304930951 ATUN EN AGUA\n7700304537648 MORA CONGELAD`);
+  const learnedT = new Map([["7700304448241", { nombre: "Tortillas de trigo", categoria: "Panadería", ubicacion: null }]]);
+  const cacheEscrita = [];
+  const res = await identifyReceipt(cadena, {
+    learned: learnedT,
+    cache: { read: async (e) => (e === "7700304537648" ? undefined : undefined), write: async (e, f) => cacheEscrita.push([e, f.fuente]) },
+    remote: remotes,
+  });
+  console.log("Cadena (recordado · APIs simuladas · UPCitemdb sin cupo):");
+  for (const i of res.receipt.items) show(i.sourceText, `${i.name} · fuente ${i.nameSource}`);
+  assert.deepEqual(res.receipt.items.map((i) => i.nameSource), ["Recordado", "Open Food Facts", "Factura"]);
+  assert.ok(!llamadas.some((l) => l.endsWith("7700304448241")), "lo recordado no consulta APIs");
+  assert.deepEqual(llamadas, [
+    "OFF 7700304930951",
+    "OFF 7700304537648", "LP 7700304537648", "UPC 7700304537648", // OFF no, LP sin red, UPC sin cupo: sigue sin romper
+  ]);
+  assert.deepEqual(cacheEscrita, [["7700304930951", "Open Food Facts"]]);
+  assert.equal(res.stats.Factura, 1);
+  // Con la caché: no se llama a ninguna API
+  llamadas.length = 0;
+  const conCache = await identifyReceipt(parseReceipt("7700304537648 MORA CONGELAD\n7700304930951 ATUN EN AGUA"), {
+    cache: { read: async (e) => ({ nombre: e === "7700304537648" ? "Mora en trozos congelada" : "Atún", fuente: "Open Food Facts" }) },
+    remote: remotes,
+  });
+  assert.equal(llamadas.length, 0);
+  assert.equal(conCache.receipt.items[0].category, "Congelados");
 
   const slow = await enrichReceipt(d1t, fake, { deadlineMs: -1 });
   assert.equal(slow.found, 0);

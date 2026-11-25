@@ -10,6 +10,7 @@ import {
   useStoreStatus,
 } from "@/services/productStore";
 import { daysUntil, formatDate, statusText } from "@/utils/expiration";
+import { formatQuantity } from "@/utils/quantity";
 export default function DetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -86,7 +87,7 @@ export default function DetailScreen() {
         {statusText(daysUntil(p.expiresOn))}
       </Txt>
       <View>
-        <InfoRow label="Cantidad" value={`${p.quantity ?? 1} unidades`} />
+        <InfoRow label="Cantidad" value={formatQuantity(p.quantity, p.unit)} />
         <InfoRow label="Categoría" value={p.category} />
         <InfoRow label="Ubicación" value={p.location ?? "Alacena"} />
         <InfoRow label="Fecha de vencimiento" value={formatDate(p.expiresOn)} />

@@ -12,9 +12,15 @@ export interface Product {
   quantity?: number;
   location?: string;
   estimated?: boolean;
+  /** "un" (unidades) o "kg" (por peso: quantity = 0.45). */
+  unit?: string;
+  /** Código de barras, si se conoce (para recordar correcciones del nombre). */
+  ean?: string | null;
 }
 
 type Row = {
+  unidad?: string;
+  ean?: string | null;
   id: string;
   nombre: string;
   categoria: string;
@@ -94,6 +100,10 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
         ["cantidad", "INTEGER NOT NULL DEFAULT 1"],
         ["ubicacion", "TEXT NOT NULL DEFAULT 'Alacena'"],
         ["estimada", "INTEGER NOT NULL DEFAULT 0"],
+        // Unidad de la cantidad ("un" o "kg") y código de barras. La columna
+        // `cantidad` ya existe; SQLite guarda ahí 0.45 sin perder decimales.
+        ["unidad", "TEXT NOT NULL DEFAULT 'un'"],
+        ["ean", "TEXT"],
       ]) {
         if (!columns.some((column) => column.name === name)) {
           await db.execAsync(
@@ -160,6 +170,8 @@ function toProduct(r: Row): Product | null {
         quantity: r.cantidad ?? 1,
         location: r.ubicacion ?? "Alacena",
         estimated: Boolean(r.estimada),
+        unit: r.unidad ?? "un",
+        ean: r.ean ?? null,
       }
     : null;
 }
@@ -232,7 +244,7 @@ export async function addProduct(input: Omit<Product, "id">): Promise<Product> {
   const db = await getDb();
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   await db.runAsync(
-    "INSERT INTO productos (id, nombre, categoria, fecha_vencimiento, cantidad, ubicacion, estimada) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO productos (id, nombre, categoria, fecha_vencimiento, cantidad, ubicacion, estimada, unidad, ean) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       id,
       input.name,
@@ -241,6 +253,8 @@ export async function addProduct(input: Omit<Product, "id">): Promise<Product> {
       input.quantity ?? 1,
       input.location ?? "Alacena",
       input.estimated ? 1 : 0,
+      input.unit ?? "un",
+      input.ean ?? null,
     ],
   );
   await reload();
@@ -253,7 +267,8 @@ export async function updateProduct(
 ): Promise<void> {
   const db = await getDb();
   await db.runAsync(
-    "UPDATE productos SET nombre = ?, categoria = ?, fecha_vencimiento = ?, cantidad = ?, ubicacion = ?, estimada = ? WHERE id = ?",
+    // Unidad y EAN se conservan si no vienen (la pantalla de edición no los cambia).
+    "UPDATE productos SET nombre = ?, categoria = ?, fecha_vencimiento = ?, cantidad = ?, ubicacion = ?, estimada = ?, unidad = COALESCE(?, unidad), ean = COALESCE(?, ean) WHERE id = ?",
     [
       input.name,
       input.category,
@@ -261,6 +276,8 @@ export async function updateProduct(
       input.quantity ?? 1,
       input.location ?? "Alacena",
       input.estimated ? 1 : 0,
+      input.unit ?? null,
+      input.ean ?? null,
       id,
     ],
   );
@@ -280,7 +297,7 @@ export async function addProducts(input: Omit<Product, "id">[]): Promise<void> {
     for (const item of input) {
       const id = Date.now() + "-" + Math.random().toString(36).slice(2);
       await db.runAsync(
-        "INSERT INTO productos (id, nombre, categoria, fecha_vencimiento, cantidad, ubicacion, estimada) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO productos (id, nombre, categoria, fecha_vencimiento, cantidad, ubicacion, estimada, unidad, ean) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           id,
           item.name,
@@ -289,6 +306,8 @@ export async function addProducts(input: Omit<Product, "id">[]): Promise<void> {
           item.quantity ?? 1,
           item.location ?? "Alacena",
           item.estimated ? 1 : 0,
+          item.unit ?? "un",
+          item.ean ?? null,
         ],
       );
     }

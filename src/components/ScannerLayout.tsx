@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button } from "./Button";
 import { LoadingSplash } from "./LoadingSplash";
-import { Icon, Txt, ui } from "./PantryUI";
+import { Chip, Icon, Txt, ui } from "./PantryUI";
 import { COLORS as C } from "@/constants/pantry";
 import { ocrMode } from "@/services/ocr";
 
@@ -34,6 +34,11 @@ type Props = {
   /** Mensaje de error o ayuda bajo el visor. */
   message?: string | null;
   manualLabel?: string;
+  /** Factura: "full" (recuadro alto) o "close" (de cerca: bajo y ancho, pocas filas). */
+  receiptMode?: "full" | "close";
+  onReceiptModeChange?: (mode: "full" | "close") => void;
+  /** Contenido extra bajo el visor (p. ej. "Se detectaron N productos" del escaneo por partes). */
+  extra?: React.ReactNode;
 };
 
 // Zoom: en iOS el valor es exponencial (0 = 1×). Los valores dan aprox. 1×, 2× y 3×.
@@ -93,6 +98,9 @@ export function ScannerLayout({
   busyTimeoutMs,
   message,
   manualLabel,
+  receiptMode = "full",
+  onReceiptModeChange,
+  extra,
 }: Props) {
   const router = useRouter();
   const focused = useIsFocused();
@@ -151,10 +159,12 @@ export function ScannerLayout({
     }
   }
 
+  // Factura "De cerca": recuadro más bajo y ancho, para pocas filas con letra grande.
+  const close = kind === "receipt" && receiptMode === "close";
   const frameStyle = {
-    width: "85%" as const,
-    maxWidth: kind === "date" ? 340 : kind === "receipt" ? 340 : 300,
-    height: kind === "receipt" ? ("62%" as const) : kind === "date" ? 120 : 170,
+    width: close ? ("94%" as const) : ("85%" as const),
+    maxWidth: close ? 420 : kind === "date" ? 340 : kind === "receipt" ? 340 : 300,
+    height: close ? 150 : kind === "receipt" ? ("62%" as const) : kind === "date" ? 120 : 170,
     borderWidth: 2,
     borderColor: live ? C.white : C.text,
     borderRadius: 16,
@@ -280,7 +290,9 @@ export function ScannerLayout({
                     ? "Coloca el código de barras dentro del recuadro"
                     : kind === "date"
                       ? "Encuadra solo la fecha de vencimiento"
-                      : "Encuadra solo la lista de productos"}
+                      : close
+                        ? "Encuadra el código y la descripción"
+                        : "Encuadra solo la lista de productos"}
                 </Txt>
                 <Txt style={{ fontSize: 12, textAlign: "center", color: live ? C.white : C.text }}>
                   {live && onBarcode
@@ -324,6 +336,24 @@ export function ScannerLayout({
           </View>
         )}
 
+        {kind === "receipt" && onReceiptModeChange && (
+          <View style={[ui.row, { justifyContent: "center", gap: 8 }]} accessibilityRole="radiogroup">
+            {(
+              [
+                ["full", "Factura completa"],
+                ["close", "De cerca"],
+              ] as const
+            ).map(([mode, label]) => (
+              <Chip
+                key={mode}
+                label={label}
+                active={receiptMode === mode}
+                onPress={() => onReceiptModeChange(mode)}
+              />
+            ))}
+          </View>
+        )}
+
         {!!message && (
           <Txt
             accessibilityRole="alert"
@@ -332,6 +362,8 @@ export function ScannerLayout({
             {message}
           </Txt>
         )}
+
+        {extra}
 
         {kind !== "code" && (
           <Pressable

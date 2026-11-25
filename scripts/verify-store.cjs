@@ -124,9 +124,46 @@ function load(name) {
     exp.toISODate(exp.detectExpirationDate("LOTE 2\nVENCE 04/12/2026").date),
     "2026-12-04",
   );
+  // Columnas nuevas (unidad, ean) sin perder datos, y cantidad por peso
+  const cols = db.prepare("PRAGMA table_info(productos)").all().map((c) => c.name);
+  assert.ok(cols.includes("unidad") && cols.includes("ean"));
+  assert.ok(store.useProducts().some((p) => p.id === "anterior" && p.unit === "un"));
+  await store.addProducts([
+    { name: "Banano", category: "Frutas y verduras", expiresOn: new Date(2027, 0, 5), quantity: 0.45, unit: "kg" },
+    { name: "Barquillos", category: "Snacks y dulces", expiresOn: new Date(2027, 2, 1), quantity: 1, ean: "7700304111114" },
+  ]);
+  const banano = store.useProducts().find((p) => p.name === "Banano");
+  assert.equal(banano.quantity, 0.45);
+  assert.equal(banano.unit, "kg");
+  const barq = store.useProducts().find((p) => p.name === "Barquillos");
+  assert.equal(barq.ean, "7700304111114");
+  // Editar sin unidad ni EAN los conserva (COALESCE)
+  await store.updateProduct(banano.id, { name: "Banano criollo", category: "Frutas y verduras", expiresOn: banano.expiresOn, quantity: 0.45 });
+  assert.equal(store.useProducts().find((p) => p.id === banano.id).unit, "kg");
+
+  // Nombres aprendidos: guardar, leer por EAN o por "TIENDA|TEXTO", contar y borrar
+  const learned = load("services/learnedNames");
+  await learned.saveLearned([
+    { key: "7700304111114", nombre: "Barquillos de vainilla", categoria: "Snacks y dulces", ubicacion: "Alacena" },
+    { key: "D1|GALLETAS DE CH", nombre: "Galletas de chocolate", categoria: "Snacks y dulces" },
+  ]);
+  const map = await learned.getLearnedFor({
+    store: "D1",
+    items: [{ ean: "7700304111114", name: "Barquillos" }, { sourceText: "GALLETAS DE CH", name: "Galletas" }],
+  });
+  assert.equal(map.get("7700304111114").nombre, "Barquillos de vainilla");
+  assert.equal(map.get("D1|GALLETAS DE CH").nombre, "Galletas de chocolate");
+  assert.equal(await learned.countLearned(), 2);
+  await learned.saveLearned([{ key: "7700304111114", nombre: "Barquillos sabor vainilla", categoria: "Snacks y dulces" }]);
+  assert.equal(await learned.countLearned(), 2); // actualiza, no duplica
+  await learned.clearLearned();
+  assert.equal(await learned.countLearned(), 0);
+  assert.ok(store.useProducts().some((p) => p.name === "Barquillos")); // borrar lo aprendido no toca la despensa
+
   console.log(
     "OK: migración sin pérdida, CRUD, cantidad y ubicación, factura atómica y rollback, compras persistentes, vencimientos y lectura de fecha.",
   );
+  console.log("OK: columnas unidad y ean, cantidad por peso y nombres aprendidos (guardar, leer, actualizar, borrar).");
   db.close();
 })().catch((error) => {
   console.error(error);

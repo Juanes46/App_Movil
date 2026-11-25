@@ -6,6 +6,7 @@ export function CheckRow({
   category,
   subtitle,
   quantity = 1,
+  quantityLabel,
   checked,
   onPress,
 }: {
@@ -13,6 +14,8 @@ export function CheckRow({
   category: string;
   subtitle?: string;
   quantity?: number;
+  /** Texto de la cantidad con unidad ("×3 un", "0,45 kg"); por defecto "x{quantity}". */
+  quantityLabel?: string;
   checked: boolean;
   onPress: () => void;
 }) {
@@ -59,7 +62,7 @@ export function CheckRow({
           <Txt style={{ fontSize: 12, color: C.muted }}>{subtitle}</Txt>
         )}
       </View>
-      <Txt style={{ fontWeight: "600" }}>x{quantity}</Txt>
+      <Txt style={{ fontWeight: "600" }}>{quantityLabel ?? `x${quantity}`}</Txt>
     </Pressable>
   );
 }

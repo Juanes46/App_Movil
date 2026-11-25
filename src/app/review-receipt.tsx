@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import * as Clipboard from "expo-clipboard";
 import { useState } from "react";
 import { TextInput, View } from "react-native";
 import { Button } from "@/components/Button";
@@ -13,14 +14,18 @@ import {
   Screen,
   Section,
   Stepper,
+  Tag,
   Txt,
   ui,
 } from "@/components/PantryUI";
 import { COLORS as C, emojiForProduct, ESTIMATED_DAYS } from "@/constants/pantry";
+import { saveLearned } from "@/services/learnedNames";
 import { addProducts } from "@/services/productStore";
+import { learnedKey } from "@/services/receiptLookup";
 import { addDays, formatDate, parseDate } from "@/utils/expiration";
 import { suggestLocation } from "@/utils/location";
-import { estimateDays, getPendingReceipt, setPendingReceipt } from "@/utils/receipt";
+import { estimateDays, getPendingReceipt, missingInfo, setPendingReceipt } from "@/utils/receipt";
+import { formatQuantity } from "@/utils/quantity";
 import { TimeoutError, withTimeout } from "@/utils/timeout";
 
 const LOCATIONS = ["Nevera", "Congelador", "Alacena"] as const;
@@ -36,6 +41,17 @@ type Row = {
   days: number;
   raw?: string;
   lowConfidence?: boolean;
+  /** "un" o "kg" */
+  unit?: string;
+  ean?: string;
+  /** Clave para recordar correcciones: EAN o "TIENDA|TEXTO". */
+  key?: string;
+  /** El nombre salió de lo que el usuario corrigió antes. */
+  fromLearned?: boolean;
+  /** De dónde salió el nombre: Recordado, Conocido, Open Food Facts, Los Precios, UPCitemdb, Factura. */
+  nameSource?: string;
+  /** La factura no traía cantidad (foto recortada): 1 por defecto. */
+  qtyUnknown?: boolean;
 };
 
 const samples: Row[] = [
@@ -61,11 +77,17 @@ export default function ReviewReceiptScreen() {
           .map((it) => ({
           name: it.name,
           category: it.category,
-          location: suggestLocation(it.name, it.category),
+          location: it.learnedLocation ?? suggestLocation(it.name, it.category),
           quantity: it.quantity,
           days: it.days ?? ESTIMATED_DAYS[it.category] ?? 30,
           raw: it.raw,
           lowConfidence: it.lowConfidence,
+          unit: it.unit ?? "un",
+          ean: it.ean,
+          key: learnedKey(it, scanned.store),
+          fromLearned: it.fromLearned,
+          nameSource: it.nameSource,
+          qtyUnknown: it.qtyUnknown,
         }))
       : samples;
     return source
@@ -76,6 +98,8 @@ export default function ReviewReceiptScreen() {
         date: formatDate(addDays(base, p.days)),
         estimated: true,
         locationTouched: false,
+        // Lo que vino de la lectura, para saber si el usuario lo corrigió.
+        orig: { name: p.name, category: p.category, location: p.location },
       }))
       // Los de baja confianza al final, con aviso.
       .sort((a, b) => Number(!!a.lowConfidence) - Number(!!b.lowConfidence));
@@ -86,6 +110,14 @@ export default function ReviewReceiptScreen() {
   const [error, setError] = useState("");
   const selected = rows.filter((p) => p.selected);
   const toReview = rows.filter((p) => p.lowConfidence).length;
+  const missing = scanned ? missingInfo(scanned) : null;
+  const [copied, setCopied] = useState(false);
+  async function copyText() {
+    if (!scanned) return;
+    await Clipboard.setStringAsync(scanned.text).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
 
   function update(i: number, values: Partial<(typeof rows)[number]>) {
     setRows((v) => v.map((p, j) => (i === j ? { ...p, ...values } : p)));
@@ -123,9 +155,27 @@ export default function ReviewReceiptScreen() {
             quantity: p.quantity,
             expiresOn: parseDate(p.date)!,
             estimated: p.estimated,
+            unit: p.unit ?? "un",
+            ean: p.ean ?? null,
           })),
         ),
       );
+      // Recordar las correcciones (nombre, categoría o ubicación) para la próxima factura.
+      const corrected = selected.filter(
+        (p) =>
+          p.key &&
+          (p.name.trim() !== p.orig.name ||
+            p.category !== p.orig.category ||
+            p.location !== p.orig.location),
+      );
+      await saveLearned(
+        corrected.map((p) => ({
+          key: p.key!,
+          nombre: p.name.trim(),
+          categoria: p.category,
+          ubicacion: p.location,
+        })),
+      ).catch(() => {}); // si falla, los productos ya quedaron guardados
       setPendingReceipt(null);
       router.replace("/pantry");
     } catch (e) {
@@ -193,6 +243,24 @@ export default function ReviewReceiptScreen() {
           </Txt>
         </View>
       )}
+      {missing && (
+        <View
+          accessibilityRole="alert"
+          style={[ui.card, { backgroundColor: C.warningSoft, borderColor: C.warning }]}
+        >
+          <Txt style={{ color: C.warningText, fontWeight: "600" }}>
+            {missing.missingUnits > 0
+              ? `Faltan ${missing.missingUnits} ${missing.missingUnits === 1 ? "producto" : "productos"} según la factura: toma otra parte`
+              : `Faltan ${formatPrice(missing.missingValue)} para llegar al total: toma otra parte`}
+          </Txt>
+          <Txt style={{ color: C.warningText, fontSize: 12 }}>
+            {scanned?.expectedCount !== null && scanned?.expectedCount !== undefined
+              ? `La factura dice ${scanned.expectedCount} artículos entregados. `
+              : ""}
+            Vuelve a Escanear factura y usa “De cerca” para las filas que faltan.
+          </Txt>
+        </View>
+      )}
       {toReview > 0 && (
         <View style={[ui.card, { backgroundColor: C.warningSoft, borderColor: C.warning }]}>
           <Txt style={{ color: C.warningText, fontWeight: "600" }}>
@@ -218,6 +286,11 @@ export default function ReviewReceiptScreen() {
           </Txt>
           {showText && (
             <View style={ui.card}>
+              <Button
+                title={copied ? "Copiado ✓" : "Copiar texto"}
+                variant="secondary"
+                onPress={copyText}
+              />
               <Txt selectable style={{ fontSize: 12, color: C.muted }}>
                 {scanned.text}
               </Txt>
@@ -232,6 +305,7 @@ export default function ReviewReceiptScreen() {
       />
       {rows.map((p, i) => (
         <View key={i} style={{ gap: 6 }}>
+          {p.fromLearned && <Tag label="Nombre recordado" tone="info" />}
           {p.lowConfidence && (
             <Txt style={{ color: C.warningText, fontSize: 12, fontWeight: "600" }}>
               ⚠ Revisa este producto
@@ -241,9 +315,10 @@ export default function ReviewReceiptScreen() {
             {...p}
             name={p.name || "Sin nombre"}
             checked={p.selected}
+            quantityLabel={formatQuantity(p.quantity, p.unit)}
             subtitle={
               p.name
-                ? `${emojiForProduct(p.name, p.category)} ${p.category} · ${p.location} · ${p.estimated ? `vence aprox. ${p.date}` : `vence ${p.date}`}`
+                ? `${emojiForProduct(p.name, p.category)} ${formatQuantity(p.quantity, p.unit)} · ${p.category} · ${p.location} · ${p.estimated ? `vence aprox. ${p.date}` : `vence ${p.date}`}`
                 : "Corrige el nombre antes de agregar"
             }
             onPress={() => {
@@ -251,9 +326,12 @@ export default function ReviewReceiptScreen() {
               if (!p.name) setEditing(true);
             }}
           />
-          {!!p.raw && (
+          {p.qtyUnknown && <Tag label="Revisar cantidad" tone="proximo" />}
+          {(!!p.raw || !!p.nameSource) && (
             <Txt numberOfLines={2} style={{ fontSize: 11, color: C.muted }}>
-              Leído: “{p.raw}”
+              {p.nameSource ? `Nombre: ${p.nameSource}` : ""}
+              {p.nameSource && p.raw ? " · " : ""}
+              {p.raw ? `Leído: “${p.raw}”` : ""}
             </Txt>
           )}
           {editing && (
@@ -284,7 +362,11 @@ export default function ReviewReceiptScreen() {
                 value={p.date}
                 onChangeText={(date) => update(i, { date, estimated: false })}
               />
-              <Stepper value={p.quantity} onChange={(quantity) => update(i, { quantity })} />
+              {p.unit === "kg" ? (
+                <Txt style={ui.muted}>Cantidad: {formatQuantity(p.quantity, p.unit)} (por peso)</Txt>
+              ) : (
+                <Stepper value={p.quantity} onChange={(quantity) => update(i, { quantity })} />
+              )}
             </View>
           )}
         </View>

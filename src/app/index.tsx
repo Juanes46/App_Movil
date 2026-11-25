@@ -25,6 +25,7 @@ import {
 } from "@/services/productStore";
 import { refreshShopping, useShopping } from "@/services/shoppingStore";
 import { getStatus } from "@/utils/expiration";
+import { formatQuantity } from "@/utils/quantity";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -166,7 +167,7 @@ export default function HomeScreen() {
                       {p.name}
                     </Txt>
                     <Txt style={{ fontSize: 11, color: C.muted }}>
-                      x{p.quantity ?? 1} · {p.location ?? "Alacena"}
+                      {formatQuantity(p.quantity, p.unit)} · {p.location ?? "Alacena"}
                     </Txt>
                   </Pressable>
                 ))}
