@@ -290,6 +290,35 @@ export async function removeProduct(id: string): Promise<void> {
   await reload();
 }
 
+/**
+ * Elimina un producto y registra qué pasó con él (para las estadísticas de
+ * desperdicio). "error" no cuenta.
+ *   await removeProductWithReason(id, "consumido")  // cuenta como aprovechado
+ *   await removeProductWithReason(id, "botado")     // cuenta como botado
+ */
+export async function removeProductWithReason(
+  id: string,
+  motivo: "consumido" | "botado" | "error",
+): Promise<void> {
+  const p = products.find((x) => x.id === id);
+  await removeProduct(id);
+  if (p && motivo !== "error") {
+    // Import tardío para evitar un ciclo (historyStore usa getDb de este módulo).
+    const { recordEvent } = await import("./historyStore");
+    await recordEvent({ name: p.name, category: p.category }, motivo);
+  }
+}
+
+/** Productos actuales (sin React), p. ej. para las notificaciones. */
+export function getProducts(): Product[] {
+  return products;
+}
+
+/** Avisa cada vez que cambia la despensa. */
+export function onProductsChange(fn: () => void): () => void {
+  return subscribe(fn);
+}
+
 /** Guarda los productos revisados de una factura en una sola transacción. */
 export async function addProducts(input: Omit<Product, "id">[]): Promise<void> {
   const db = await getDb();

@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
-import { ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import {
   Avatar,
   Chip,
@@ -19,6 +19,8 @@ import {
   useProducts,
   useStoreStatus,
 } from "@/services/productStore";
+import { COLORS as C } from "@/constants/pantry";
+import { useAjustes } from "@/services/settingsStore";
 import { getStatus } from "@/utils/expiration";
 const normalize = (s: string) =>
   s
@@ -27,11 +29,14 @@ const normalize = (s: string) =>
     .replace(/[\u0300-\u036f]/g, "");
 export default function PantryScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ status?: string }>();
+  const params = useLocalSearchParams<{ status?: string; ubicacion?: string; aviso?: string }>();
   const products = useProducts();
   const { ready, error } = useStoreStatus();
+  // Se vuelve a dibujar si cambian los días de anticipación ("Próximo a vencer").
+  useAjustes();
   const [query, setQuery] = useState("");
-  const [location, setLocation] = useState("Todos");
+  const [location, setLocation] = useState(params.ubicacion ?? "Todos");
+  const [aviso, setAviso] = useState(params.aviso ?? "");
   const [status, setStatus] = useState(params.status ?? "");
   const [sortName, setSortName] = useState(false);
   const { refreshing, onRefresh } = useRefresh(refreshProducts);
@@ -61,6 +66,16 @@ export default function PantryScreen() {
         />
         <Avatar />
       </View>
+      {!!aviso && (
+        <Pressable
+          accessibilityRole="alert"
+          onPress={() => setAviso("")}
+          style={[ui.card, { backgroundColor: C.okSoft, borderColor: C.okSoft }]}
+        >
+          <Txt style={{ color: C.ok, fontWeight: "600" }}>✓ {aviso}</Txt>
+          <Txt style={{ color: C.ok, fontSize: 12 }}>Toca para cerrar</Txt>
+        </Pressable>
+      )}
       <SearchField value={query} onChangeText={setQuery} />
       <ScrollView
         horizontal

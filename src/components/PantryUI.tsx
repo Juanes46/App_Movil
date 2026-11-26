@@ -19,6 +19,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { COLORS as C } from "@/constants/pantry";
 import { FONTS, resolveFont } from "@/theme/fonts";
+import { initials, useAjustes } from "@/services/settingsStore";
 import { Button } from "./Button";
 
 export const icons = {
@@ -270,7 +271,7 @@ export function Avatar() {
       onPress={() => router.push("/profile")}
       style={ui.avatar}
     >
-      <Txt style={{ color: C.primaryDark, fontWeight: "600" }}>S</Txt>
+      <Txt style={{ color: C.primaryDark, fontWeight: "600" }}>{initials(useAjustes().nombre)}</Txt>
     </Pressable>
   );
 }
@@ -476,7 +477,12 @@ export function Screen({
           children
         )}
         {footer && (
-          <SafeAreaView edges={["bottom"]} style={ui.footer}>
+          // Con barra inferior: el borde seguro lo pone la barra, y se deja espacio
+          // para el botón "+" flotante, que sobresale 41 px hacia arriba.
+          <SafeAreaView
+            edges={active ? [] : ["bottom"]}
+            style={[ui.footer, active ? { paddingBottom: 48 } : null]}
+          >
             {footer}
           </SafeAreaView>
         )}

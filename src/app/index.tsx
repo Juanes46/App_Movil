@@ -24,12 +24,14 @@ import {
   useStoreStatus,
 } from "@/services/productStore";
 import { refreshShopping, useShopping } from "@/services/shoppingStore";
+import { useAjustes } from "@/services/settingsStore";
 import { getStatus } from "@/utils/expiration";
 import { formatQuantity } from "@/utils/quantity";
 
 export default function HomeScreen() {
   const router = useRouter();
   const products = useProducts();
+  const { nombre } = useAjustes(); // "Próximo a vencer" depende de los días de anticipación
   const { ready, error } = useStoreStatus();
   const shopping = useShopping();
   const { refreshing, onRefresh } = useRefresh(refreshProducts, refreshShopping);
@@ -48,7 +50,7 @@ export default function HomeScreen() {
           <Txt style={ui.muted}>
             {hour < 12 ? "Buenos días" : hour < 18 ? "Buenas tardes" : "Buenas noches"}
           </Txt>
-          <Txt style={[ui.title, { fontSize: 24 }]}>Hola, Samuel</Txt>
+          <Txt style={[ui.title, { fontSize: 24 }]}>{nombre.trim() ? `Hola, ${nombre.trim().split(/\s+/)[0]}` : "Hola"}</Txt>
         </View>
         <Pressable
           accessibilityRole="button"

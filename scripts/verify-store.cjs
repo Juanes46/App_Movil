@@ -164,6 +164,113 @@ function load(name) {
     "OK: migración sin pérdida, CRUD, cantidad y ubicación, factura atómica y rollback, compras persistentes, vencimientos y lectura de fecha.",
   );
   console.log("OK: columnas unidad y ean, cantidad por peso y nombres aprendidos (guardar, leer, actualizar, borrar).");
+
+  // ================= Lista de compras completa =================
+  await shop.clearShopping();
+  // Repetido (mismo nombre normalizado) suma cantidades
+  await shop.addShopping([{ name: "Leche entera", category: "Lácteos", quantity: 1 }]);
+  await shop.addShopping([{ name: "LECHE  ENTERA", category: "Lácteos", quantity: 2 }]);
+  console.log(`Compras · repetido: ${JSON.stringify(shop.useShopping().map((i) => [i.name, i.quantity]))}`);
+  assert.equal(shop.useShopping().length, 1);
+  assert.equal(shop.useShopping()[0].quantity, 3);
+  // Editar, eliminar y deshacer
+  await shop.updateShopping(shop.useShopping()[0].id, { quantity: 4, category: "Bebidas" });
+  assert.deepEqual([shop.useShopping()[0].quantity, shop.useShopping()[0].category], [4, "Bebidas"]);
+  const removed = await shop.removeShopping(shop.useShopping()[0].id);
+  assert.equal(shop.useShopping().length, 0);
+  await shop.restoreShopping(removed);
+  assert.equal(shop.useShopping()[0].quantity, 4);
+  await shop.clearShopping();
+
+  // Terminar compra: 3 marcados + 2 pendientes
+  await shop.addShopping([
+    { name: "Arroz diana", category: "Granos", quantity: 1 },
+    { name: "Pechuga de pollo", category: "Carnes", quantity: 2 },
+    { name: "Yogur natural", category: "Lácteos", quantity: 1 },
+    { name: "Café", category: "Bebidas", quantity: 1 },
+    { name: "Jabón Protex", category: "Cuidado personal", quantity: 1 },
+  ]);
+  for (const it of shop.useShopping().slice(0, 3)) await shop.toggleShopping(it);
+  const { estimateDays } = load("utils/receipt");
+  const { suggestLocation } = load("utils/location");
+  const beforeFinish = store.useProducts().length;
+  const compra = new Date(2026, 10, 24);
+  const bought = shop.useShopping().filter((i) => i.done).map((i) => ({
+    id: i.id, name: i.name, category: i.category, quantity: i.quantity,
+    expiresOn: exp.addDays(compra, estimateDays(i.name, i.category)),
+    location: suggestLocation(i.name, i.category), estimated: true,
+  }));
+  const n = await shop.finishShopping(bought);
+  const nuevos = store.useProducts().filter((p) => bought.some((b) => b.name === p.name));
+  console.log(`Terminar compra: ${n} a la despensa → ${nuevos.map((p) => `${p.name} (${p.location}, vence ${exp.formatDate(p.expiresOn)}${p.estimated ? " estimada" : ""})`).join(" · ")} · quedan en la lista: ${shop.useShopping().map((i) => i.name).join(", ")}`);
+  assert.equal(n, 3);
+  assert.equal(store.useProducts().length, beforeFinish + 3);
+  assert.ok(nuevos.every((p) => p.estimated && p.location));
+  assert.equal(nuevos.find((p) => p.name === "Pechuga de pollo").location, "Congelador");
+  assert.equal(shop.useShopping().length, 2);
+  assert.ok(shop.useShopping().every((i) => !i.done));
+  // Al guardar una factura se marcan los pendientes que coinciden
+  const marcados = await shop.markBoughtByNames(["Cafe sello rojo 250G", "Leche entera"]);
+  assert.equal(marcados, 1); // "Café" ⊂ "Cafe sello rojo 250G"
+  assert.equal(shop.useShopping().find((i) => i.name === "Café").done, true);
+  // Compartir lista (texto agrupado por categoría)
+  const { shoppingShareText, pantrySummary } = load("utils/shareText");
+  const texto = shoppingShareText([{ name: "Leche", category: "Lácteos", quantity: 2 }, { name: "Pan", category: "Panadería", quantity: 1 }]);
+  console.log("Compartir lista:\n  " + texto.replace(/\n/g, "\n  "));
+  assert.ok(texto.includes("Lácteos\n• Leche ×2") && texto.includes("Panadería\n• Pan"));
+  assert.ok(pantrySummary(store.useProducts()).startsWith("Mi despensa · Despensa Viva ("));
+  await shop.clearDone();
+  assert.ok(shop.useShopping().every((i) => !i.done));
+
+  // ================= Historial y estadísticas de desperdicio =================
+  const hist = load("services/historyStore");
+  await store.addProducts([
+    { name: "Leche deslactosada", category: "Lácteos", expiresOn: new Date(2026, 11, 1) },
+    { name: "Yogur griego", category: "Lácteos", expiresOn: new Date(2026, 11, 1) },
+    { name: "Pan blanco", category: "Panadería", expiresOn: new Date(2026, 11, 1) },
+  ]);
+  const byName = (name) => store.useProducts().find((p) => p.name === name).id;
+  await store.removeProductWithReason(byName("Leche deslactosada"), "consumido");
+  await store.removeProductWithReason(byName("Yogur griego"), "botado");
+  await store.removeProductWithReason(byName("Pan blanco"), "error"); // no cuenta
+  const stats = await hist.monthStats();
+  console.log(`Estadísticas del mes: ${JSON.stringify(stats)}`);
+  assert.deepEqual(stats, { consumidos: 1, botados: 1, aprovechado: 50, topBotados: [["Lácteos", 1]] });
+  assert.ok(!store.useProducts().some((p) => p.name === "Pan blanco")); // se eliminó igual
+
+  // ================= Días de anticipación =================
+  const settings = load("services/settingsStore");
+  const hoy = new Date(2026, 10, 24);
+  const en5 = exp.addDays(hoy, 5);
+  assert.equal(exp.getStatus(en5, hoy), "proximo"); // 7 por defecto
+  await settings.setAjuste("diasAnticipacion", 3);
+  console.log(`Anticipación 3 días: vence en 5 días -> ${exp.getStatus(en5, hoy)}`);
+  assert.equal(exp.getStatus(en5, hoy), "vigente");
+  assert.equal(exp.getStatus(exp.addDays(hoy, 2), hoy), "proximo");
+
+  // ================= Los ajustes persisten al recargar la base =================
+  await settings.setAjuste("nombre", "Samuel David Rodríguez Mendoza");
+  await settings.setAjuste("ciudad", "Bogotá");
+  await settings.setAjuste("alertas", true);
+  exp.setSoonDays(7); // simula reiniciar la app
+  const recargados = await settings.loadAjustes();
+  console.log(`Ajustes recargados: ${JSON.stringify(recargados)} · iniciales ${settings.initials(recargados.nombre)}`);
+  assert.equal(recargados.nombre, "Samuel David Rodríguez Mendoza");
+  assert.equal(recargados.ciudad, "Bogotá");
+  assert.equal(recargados.alertas, true);
+  assert.equal(recargados.diasAnticipacion, 3);
+  assert.equal(exp.getSoonDays(), 3); // se aplica al cargar
+  assert.equal(settings.initials("Samuel David Rodríguez Mendoza"), "SM");
+
+  // ================= Borrar todos los datos =================
+  const dataSvc = load("services/dataStore");
+  await dataSvc.clearAllData();
+  assert.equal(store.useProducts().length, 0);
+  assert.equal(shop.useShopping().length, 0);
+  assert.equal((await hist.monthStats()).aprovechado, null);
+  assert.equal(settings.getAjustes().nombre, "");
+  assert.equal(exp.getSoonDays(), 7);
+  console.log("OK: compras (repetidos, editar, deshacer, terminar compra, factura), historial, anticipación, ajustes y borrar todo.");
   db.close();
 })().catch((error) => {
   console.error(error);

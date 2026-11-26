@@ -2,8 +2,21 @@ import { COLORS } from '@/constants/pantry';
 
 export type Status = 'vigente' | 'proximo' | 'vencido';
 
-/** Un producto es "próximo a vencer" si le quedan 7 días o menos. */
+/** Días de anticipación por defecto: "próximo a vencer" si le quedan 7 días o menos. */
 export const SOON_DAYS = 7;
+
+/**
+ * Días de anticipación actuales (3, 5 o 7). Es un ajuste del usuario: lo fija
+ * services/settingsStore al cargar o cambiar "Días de anticipación".
+ *   setSoonDays(3); getStatus(dentro de 5 días) -> "vigente"
+ */
+let soonDays = SOON_DAYS;
+export function setSoonDays(days: number): void {
+  soonDays = [3, 5, 7].includes(days) ? days : SOON_DAYS;
+}
+export function getSoonDays(): number {
+  return soonDays;
+}
 
 const MS_DAY = 86_400_000;
 
@@ -36,7 +49,7 @@ export function daysUntil(date: Date, today: Date = new Date()): number {
 export function getStatus(date: Date, today: Date = new Date()): Status {
   const days = daysUntil(date, today);
   if (days < 0) return 'vencido';
-  if (days <= SOON_DAYS) return 'proximo';
+  if (days <= soonDays) return 'proximo';
   return 'vigente';
 }
 

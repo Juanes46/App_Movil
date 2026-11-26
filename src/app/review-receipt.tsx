@@ -21,6 +21,7 @@ import {
 import { COLORS as C, emojiForProduct, ESTIMATED_DAYS } from "@/constants/pantry";
 import { saveLearned } from "@/services/learnedNames";
 import { addProducts } from "@/services/productStore";
+import { markBoughtByNames } from "@/services/shoppingStore";
 import { learnedKey } from "@/services/receiptLookup";
 import { addDays, formatDate, parseDate } from "@/utils/expiration";
 import { suggestLocation } from "@/utils/location";
@@ -176,8 +177,17 @@ export default function ReviewReceiptScreen() {
           ubicacion: p.location,
         })),
       ).catch(() => {}); // si falla, los productos ya quedaron guardados
+      // Lo que estaba pendiente en la lista de compras y vino en la factura: comprado.
+      const marked = await markBoughtByNames(selected.map((p) => p.name)).catch(() => 0);
       setPendingReceipt(null);
-      router.replace("/pantry");
+      router.replace({
+        pathname: "/pantry",
+        params: marked
+          ? {
+              aviso: `Se ${marked === 1 ? "marcó 1 producto" : `marcaron ${marked} productos`} de tu lista como ${marked === 1 ? "comprado" : "comprados"}`,
+            }
+          : {},
+      });
     } catch (e) {
       setError(
         e instanceof TimeoutError

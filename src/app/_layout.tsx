@@ -3,10 +3,12 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useState } from "react";
-import { View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SplashOverlay } from "@/components/SplashOverlay";
 import { COLORS } from "@/constants/pantry";
+import { startNotificationSync } from "@/services/notifications";
 import { getDb } from "@/services/productStore";
+import { loadAjustes } from "@/services/settingsStore";
 import { FONT_FILES } from "@/theme/fonts";
 
 // El splash nativo queda visible hasta que carguen las fuentes y se abra SQLite.
@@ -20,9 +22,14 @@ export default function RootLayout() {
 
   useEffect(() => {
     // Si SQLite falla, igual se entra: cada pantalla muestra su error con "Reintentar".
+    // Los ajustes (p. ej. días de anticipación) se cargan antes de mostrar la app.
     getDb()
+      .then(() => loadAjustes())
       .catch(() => {})
-      .finally(() => setDbDone(true));
+      .finally(() => {
+        setDbDone(true);
+        startNotificationSync();
+      });
   }, []);
 
   const ready = (fontsLoaded || !!fontError) && dbDone;
@@ -34,7 +41,7 @@ export default function RootLayout() {
   if (!ready) return null; // sigue el splash nativo
 
   return (
-    <View style={{ flex: 1, backgroundColor: COLORS.background }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: COLORS.background }}>
       <StatusBar style="dark" />
       <Stack
         screenOptions={{
@@ -43,6 +50,6 @@ export default function RootLayout() {
         }}
       />
       {overlay && <SplashOverlay onDone={hideOverlay} />}
-    </View>
+    </GestureHandlerRootView>
   );
 }

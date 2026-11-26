@@ -5,7 +5,7 @@ import { Button } from "@/components/Button";
 import { InfoRow, Note, Screen, Txt, ui } from "@/components/PantryUI";
 import { COLORS as C, emojiForProduct } from "@/constants/pantry";
 import {
-  removeProduct,
+  removeProductWithReason,
   useProducts,
   useStoreStatus,
 } from "@/services/productStore";
@@ -19,11 +19,12 @@ export default function DetailScreen() {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  async function remove() {
+  /** Elimina y registra qué pasó (para las estadísticas de desperdicio del Perfil). */
+  async function remove(motivo: "consumido" | "botado" | "error") {
     if (!p || busy) return;
     setBusy(true);
     try {
-      await removeProduct(p.id);
+      await removeProductWithReason(p.id, motivo);
       router.replace("/pantry");
     } catch {
       setError("No se pudo eliminar el producto.");
@@ -46,12 +47,23 @@ export default function DetailScreen() {
       footer={
         confirm ? (
           <>
-            <Txt>¿Eliminar {p.name} de tu despensa?</Txt>
+            <Txt style={{ fontWeight: "600" }}>¿Qué pasó con {p.name}?</Txt>
             <Button
-              title={busy ? "Eliminando…" : "Confirmar eliminación"}
+              title="Lo consumí"
+              disabled={busy}
+              onPress={() => remove("consumido")}
+            />
+            <Button
+              title="Se venció / lo boté"
               variant="danger"
               disabled={busy}
-              onPress={remove}
+              onPress={() => remove("botado")}
+            />
+            <Button
+              title="Lo eliminé por error"
+              variant="secondary"
+              disabled={busy}
+              onPress={() => remove("error")}
             />
             <Button
               title="Cancelar"
